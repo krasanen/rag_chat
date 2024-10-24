@@ -1,0 +1,7 @@
+flask
+faiss-cpu
+cohere
+transformers
+sentence-transformers
+pdfminer.six
+langdetect

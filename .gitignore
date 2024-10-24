@@ -1,0 +1,123 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+.env/
+
+# Environment variables file
+.env
+
+# FAISS index and mapping files
+faiss.index
+id_mapping.pkl
+
+# Source directories (ignore processed and raw source files)
+source_pdfs/
+source_txts/
+source_chunks/
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.swp
+*.swo
+*.tmp
+*.temp
+*.bak
+
+# Docker-related files
+# Exclude Docker secrets if using Docker Swarm or Kubernetes
+secrets/
+*.secret
+
+# IDE and Editor directories and files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Coverage and testing reports
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Sphinx documentation build directory
+docs/_build/
+
+# PyBuilder
+target/
+
+# Rope project settings
+.ropeproject/
+
+# Spyder project settings
+.spyderproject
+.spyderworkspace
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Cython debug symbols
+cython_debug/
+
+# MyPy type checker
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# SageMath parsed files
+*.sage.py
