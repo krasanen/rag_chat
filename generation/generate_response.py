@@ -5,7 +5,7 @@ import os
 class ResponseGenerator:
     def __init__(self, cohere_api_key):
         self.cohere_client = cohere.Client(cohere_api_key)
-    
+
     def generate(self, retrieved_texts, question, language='fi'):
         prompt = "Collective Agreement Chatbot\n"
         prompt += f"Language: {'Finnish' if language == 'fi' else 'English'}\n"
@@ -13,11 +13,11 @@ class ResponseGenerator:
         for text in retrieved_texts:
             prompt += text + "\n"
         prompt += f"Question: {question}\nAnswer:"
-        
+
         response = self.cohere_client.generate(
-            model='command-xlarge-nightly',
+            model="command-xlarge-nightly",
             prompt=prompt,
-            max_tokens=1500,
+            max_tokens=1000,
             temperature=0.3,
             stop_sequences=["\n"],
         )

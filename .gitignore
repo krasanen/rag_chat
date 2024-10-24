@@ -37,11 +37,6 @@ env/
 faiss.index
 id_mapping.pkl
 
-# Source directories (ignore processed and raw source files)
-source_pdfs/
-source_txts/
-source_chunks/
-
 # Logs
 logs/
 *.log

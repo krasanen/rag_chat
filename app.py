@@ -3,8 +3,16 @@ from flask import Flask, request, render_template
 from retrieval.retrieval_system import RetrievalSystem
 from generation.generate_response import ResponseGenerator
 import os
+import utils.pdf_to_text
+import utils.split_text
 
 app = Flask(__name__)
+
+print("PDF to Text Conversion...")
+utils.pdf_to_text.convert_pdfs_to_text("source_pdfs", "source_txts")
+
+print("Text Splitting...")
+utils.split_text.process_texts("source_txts", "source_chunks")
 
 # Initialize Retrieval System
 print("Initializing Retrieval System...")
