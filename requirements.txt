@@ -5,3 +5,8 @@ transformers
 sentence-transformers
 pdfminer.six
 langdetect
+openai
+python-dotenv
+numpy
+tiktoken
+langdetect

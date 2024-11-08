@@ -116,3 +116,7 @@ dmypy.json
 
 # SageMath parsed files
 *.sage.py
+
+# source chunks and texts
+source_chunks/
+source_txts/
