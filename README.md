@@ -3,7 +3,7 @@ see architecture.md
 
 # Building and running the application on docker container, replace your_cohere_api_key with yours
 docker build -t rag_chatbot .
-docker run -d -p 8000:8000 --name=rag_chatbox --env COHERE_API_KEY=wSSpHvHP9nVuRiHXiUglfgTEUdH7xpD1D8EvL8w4 rag_chatbot
+docker run -d -p 8000:8000 --name=rag_chatbox --env OPENAI_API_KEY=xxx rag_chatbot
 docker logs -f rag_chatbox
 
 # for testing it browse to
