@@ -247,7 +247,7 @@ class RetrievalSystem:
             for idx in indices[0]:
                 if idx == -1:
                     continue  # FAISS returns -1 if no more neighbors are found
-                text = self.id_mapping.get(idx, "")
+                text = self.id_mapping.get(idx, "").decode("unicode-escape")
                 if text:
                     results.append(text)
             logger.info(f"Retrieved {len(results)} relevant chunks.")
