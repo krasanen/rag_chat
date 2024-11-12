@@ -58,13 +58,21 @@ class ResponseGenerator:
         Returns:
             str: Generated answer from the model.
         """
-        # Construct the prompt
-        prompt = "Collective Agreement Chatbot\n"
+        # Construct the optimized prompt
+        prompt = "Collective Agreement Information Assistant\n"
         prompt += f"Language: {'Finnish' if language == 'fi' else 'English'}\n"
-        prompt += "Give answers to question from these documents:\n"
+        prompt += (
+            "You are an expert in interpreting and summarizing collective agreements. "
+            "Answer the user's question using only information from the following collective agreement excerpts. "
+            "Summarize the relevant clauses in a clear and detailed manner, referring to specific sections when possible.\n\n"
+        )
+
+        # Add retrieved texts to the prompt
+        prompt += "Relevant Collective Agreement Excerpts:\n"
         for text in retrieved_texts:
-            prompt += text + "\n"
-        prompt += f"Question: {question}\nAnswer:"
+            prompt += f"- {text}\n"
+
+        prompt += f"\nUser's Question: {question}\nAnswer in detail, mentioning relevant clauses or sections if available:"
 
         # Count tokens in the prompt
         prompt_token_count = self.count_tokens(prompt)
@@ -87,7 +95,10 @@ class ResponseGenerator:
             response = openai.ChatCompletion.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant with expertise in labor agreements and legal documentation.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=response_max_tokens,

@@ -131,22 +131,14 @@ class RetrievalSystem:
 
     def build_index(self, index_path: str, mapping_path: str, batch_size: int = 10):
         """
-        Builds the FAISS index from text chunks using batch embeddings.
-
-        Args:
-            index_path (str): Path to save the FAISS index.
-            mapping_path (str): Path to save the ID to text mapping.
-            batch_size (int): Number of texts to embed per API call.
+        Builds the FAISS index from text chunks using batch embeddings, with optimized chunking strategies.
         """
-        logger.info("Starting to build the FAISS index...")
-        # Load existing cache
+        # Load cache if exists
         if os.path.exists(self.cache_file):
             with open(self.cache_file, "r", encoding="utf-8") as cf:
                 embedding_cache = json.load(cf)
-            logger.info("Loaded existing embedding cache.")
         else:
             embedding_cache = {}
-            logger.info("No existing embedding cache found. Starting fresh.")
 
         texts = []
         file_indices = []
@@ -155,32 +147,39 @@ class RetrievalSystem:
                 chunk_path = os.path.join(self.chunk_dir, chunk_file)
                 try:
                     with open(chunk_path, "r", encoding="utf-8") as f:
-                        text = f.read().strip()
-                    if not text:
-                        continue  # Skip empty chunks
-                    if text in embedding_cache:
-                        embedding = embedding_cache[text]
-                        if embedding:
-                            embedding_vector = np.array(embedding).astype("float32")
-                            self.index.add(embedding_vector.reshape(1, -1))
-                            self.id_mapping[idx] = text
-                    else:
-                        texts.append(text)
-                        file_indices.append(idx)
-                        if len(texts) == batch_size:
-                            embeddings = self.get_openai_embeddings(texts)
-                            for i, embedding in enumerate(embeddings):
-                                if not embedding:
-                                    continue
-                                embedding_cache[texts[i]] = embedding
+                        full_text = f.read().strip()
+
+                    # Dynamic Chunking
+                    chunks = self.create_semantic_chunks(full_text)
+
+                    for chunk in chunks:
+                        if not chunk.strip():  # Skip empty chunks
+                            continue
+                        if chunk in embedding_cache:
+                            embedding = embedding_cache[chunk]
+                            if embedding:
                                 embedding_vector = np.array(embedding).astype("float32")
                                 self.index.add(embedding_vector.reshape(1, -1))
-                                self.id_mapping[file_indices[i]] = texts[i]
-                            texts = []
-                            file_indices = []
+                                self.id_mapping[idx] = chunk
+                        else:
+                            texts.append(chunk)
+                            file_indices.append(idx)
+                            if len(texts) == batch_size:
+                                embeddings = self.get_openai_embeddings(texts)
+                                for i, embedding in enumerate(embeddings):
+                                    if not embedding:
+                                        continue
+                                    embedding_cache[texts[i]] = embedding
+                                    embedding_vector = np.array(embedding).astype(
+                                        "float32"
+                                    )
+                                    self.index.add(embedding_vector.reshape(1, -1))
+                                    self.id_mapping[file_indices[i]] = texts[i]
+                                texts = []
+                                file_indices = []
                 except Exception as e:
                     logger.error(f"Error processing {chunk_file}: {e}")
-        # Process any remaining texts
+        # Process remaining texts
         if texts:
             embeddings = self.get_openai_embeddings(texts)
             for i, embedding in enumerate(embeddings):
@@ -190,15 +189,40 @@ class RetrievalSystem:
                 embedding_vector = np.array(embedding).astype("float32")
                 self.index.add(embedding_vector.reshape(1, -1))
                 self.id_mapping[file_indices[i]] = texts[i]
-        # Save the FAISS index and mapping
+
+        # Save index and mappings
         faiss.write_index(self.index, index_path)
         with open(mapping_path, "wb") as f:
             pickle.dump(self.id_mapping, f)
-        # Save the embedding cache
         with open(self.cache_file, "w", encoding="utf-8") as cf:
             json.dump(embedding_cache, cf)
         logger.info("FAISS index built and saved successfully.")
-        logger.info("Embedding cache updated.")
+
+    def create_semantic_chunks(self, text, max_tokens=512, overlap=50):
+        """
+        Creates semantic chunks based on sentence boundaries and optional overlapping.
+        """
+        sentences = text.split(". ")
+        chunks = []
+        current_chunk = []
+        current_length = 0
+
+        for sentence in sentences:
+            sentence_length = len(sentence.split())
+            if current_length + sentence_length <= max_tokens:
+                current_chunk.append(sentence)
+                current_length += sentence_length
+            else:
+                chunks.append(". ".join(current_chunk).strip())
+                # Create overlap with last few sentences
+                overlap_start = max(0, len(current_chunk) - overlap)
+                current_chunk = current_chunk[overlap_start:] + [sentence]
+                current_length = sum(len(s.split()) for s in current_chunk)
+
+        if current_chunk:
+            chunks.append(". ".join(current_chunk).strip())
+
+        return chunks
 
     def retrieve(self, query: str, top_k: int = 5) -> List[str]:
         """
