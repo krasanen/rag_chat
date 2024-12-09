@@ -198,60 +198,125 @@ class RetrievalSystem:
             json.dump(embedding_cache, cf)
         logger.info("FAISS index built and saved successfully.")
 
-    def create_semantic_chunks(self, text, max_tokens=512, overlap=50):
+    def create_semantic_chunks(self, text, max_tokens=800, overlap=200):
         """
-        Creates semantic chunks based on sentence boundaries and optional overlapping.
+        Creates semantic chunks with larger size and overlap to maintain context.
         """
-        sentences = text.split(". ")
+        # Split by sections first
+        sections = text.split("\n\n")
         chunks = []
         current_chunk = []
         current_length = 0
 
-        for sentence in sentences:
-            sentence_length = len(sentence.split())
-            if current_length + sentence_length <= max_tokens:
-                current_chunk.append(sentence)
-                current_length += sentence_length
-            else:
-                chunks.append(". ".join(current_chunk).strip())
-                # Create overlap with last few sentences
-                overlap_start = max(0, len(current_chunk) - overlap)
-                current_chunk = current_chunk[overlap_start:] + [sentence]
-                current_length = sum(len(s.split()) for s in current_chunk)
+        for section in sections:
+            section = section.strip()
+            if not section:
+                continue
+
+            # Estimate section length
+            section_length = len(section.split())
+
+            if current_length + section_length > max_tokens and current_chunk:
+                # Join with double newlines to preserve formatting
+                chunks.append("\n\n".join(current_chunk))
+                # Keep significant overlap for context
+                current_chunk = (
+                    current_chunk[-2:] if len(current_chunk) > 2 else current_chunk[-1:]
+                )
+                current_length = sum(len(p.split()) for p in current_chunk)
+
+            current_chunk.append(section)
+            current_length += section_length
 
         if current_chunk:
-            chunks.append(". ".join(current_chunk).strip())
+            chunks.append("\n\n".join(current_chunk))
 
         return chunks
 
     def retrieve(self, query: str, top_k: int = 5) -> List[str]:
         """
-        Retrieves the top_k most similar text chunks to the query.
-
-        Args:
-            query (str): The user query.
-            top_k (int): Number of top similar chunks to retrieve.
-
-        Returns:
-            List[str]: List of retrieved text chunks.
+        Retrieve the most relevant text chunks for a given query with improved context.
         """
         try:
             logger.info(f"Generating embedding for query: {query}")
+
+            # Generate embedding for the query
             query_embedding = self.get_openai_embedding(query)
             if not query_embedding:
-                logger.error("Failed to generate embedding for the query.")
+                logger.error("Failed to generate embedding for query")
                 return []
-            query_vector = np.array(query_embedding).astype("float32").reshape(1, -1)
-            distances, indices = self.index.search(query_vector, top_k)
+
+            # Convert embedding to correct format for FAISS
+            query_embedding = np.array(query_embedding).astype("float32").reshape(1, -1)
+
+            # Search the index with more neighbors to filter
+            D, I = self.index.search(query_embedding, top_k * 2)
+
+            # Get the corresponding texts and sort by relevance score
             results = []
-            for idx in indices[0]:
-                if idx == -1:
-                    continue  # FAISS returns -1 if no more neighbors are found
-                text = self.id_mapping.get(idx, "")
-                if text:
-                    results.append(text)
-            logger.info(f"Retrieved {len(results)} relevant chunks.")
-            return results
+            seen_content = set()  # To avoid duplicate content
+
+            for score, idx in zip(D[0], I[0]):
+                if idx in self.id_mapping:
+                    text = self.id_mapping[idx]
+
+                    # Skip if too similar to already included content
+                    text_normalized = " ".join(text.split())  # Normalize whitespace
+                    if any(
+                        self._text_similarity(text_normalized, seen) > 0.8
+                        for seen in seen_content
+                    ):
+                        continue
+
+                    results.append(
+                        {
+                            "text": text,
+                            "score": float(score),  # Convert to float for sorting
+                        }
+                    )
+                    seen_content.add(text_normalized)
+
+            # Sort by relevance score and take top_k
+            results.sort(key=lambda x: x["score"])
+            final_results = [r["text"] for r in results[:top_k]]
+
+            # Add section headers if available
+            final_results_with_context = []
+            for text in final_results:
+                # Try to find and include relevant section headers
+                section_header = self._find_section_header(text)
+                if section_header:
+                    final_results_with_context.append(f"{section_header}\n\n{text}")
+                else:
+                    final_results_with_context.append(text)
+
+            return final_results_with_context
+
         except Exception as e:
-            logger.error(f"Error during retrieval: {e}")
+            logger.error(f"Error during retrieval: {str(e)}")
             return []
+
+    def _text_similarity(self, text1: str, text2: str) -> float:
+        """Simple text similarity check to avoid duplicate content"""
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        if not words1 or not words2:
+            return 0.0
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        return len(intersection) / len(union)
+
+    def _find_section_header(self, text: str) -> str:
+        """Try to find a relevant section header for the text"""
+        # Look for common header patterns
+        lines = text.split("\n")
+        for line in lines[:2]:  # Check first couple of lines
+            # Common header patterns in legal documents
+            if any(
+                pattern in line.lower() for pattern in ["§", "artikla", "kohta", "luku"]
+            ):
+                return line
+            # Check for all-caps lines which are often headers
+            if line.isupper() and len(line.split()) <= 10:
+                return line
+        return ""

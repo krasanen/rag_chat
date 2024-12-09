@@ -48,7 +48,9 @@ def initialize_system():
 
         # Initialize Response Generator with OpenAI API Key
         generator = ResponseGenerator(
-            openai_api_key=cohere_api_key, model="gpt-3.5-turbo", max_tokens=2048
+            openai_api_key=cohere_api_key,
+            model="gpt-4",  # Use GPT-4 instead of GPT-3.5
+            max_tokens=2048,
         )  # Adjust max_tokens as needed
 
         # Set initialization flag to True
@@ -89,23 +91,23 @@ def detect_language(text):
         return "en"  # Default to English if detection fails
 
 
-def retrieve_with_token_limit(query, max_total_tokens=800, average_chunk_tokens=200):
+def retrieve_with_token_limit(query, max_total_tokens=2000, average_chunk_tokens=400):
     """
-    Retrieves the maximum number of chunks without exceeding the token limit.
-
-    Args:
-        query (str): User's question.
-        max_total_tokens (int): Maximum tokens allowed for retrieved texts.
-        average_chunk_tokens (int): Average tokens per chunk (estimate).
-
-    Returns:
-        List[str]: List of retrieved text chunks.
+    Retrieves more chunks with higher token limit for better context.
     """
-    # Estimate how many chunks can fit
+    # Add context to the query to improve retrieval
+    enhanced_query = f"""
+    Find sections related to: {query}
+    Include surrounding context and related clauses.
+    Look for:
+    - Direct mentions of the topic
+    - Related conditions and requirements
+    - Exceptions and special cases
+    - Cross-references to other sections
+    """
+
     max_chunks = max_total_tokens // average_chunk_tokens
-
-    # Retrieve more chunks than needed to allow for variable lengths
-    retrieved_chunks = retrieval.retrieve(query, top_k=max_chunks * 2)
+    retrieved_chunks = retrieval.retrieve(enhanced_query, top_k=max_chunks * 2)
 
     selected_chunks = []
     current_token_count = 0
