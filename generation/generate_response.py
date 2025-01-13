@@ -54,24 +54,46 @@ class ResponseGenerator:
             # Log the retrieval results
             logger.info(f"Question: {question}")
             logger.info(f"Number of retrieved chunks: {len(retrieved_texts)}")
-            logger.info(f"First chunk preview: {retrieved_texts[0][:200]}...")
+            logger.info(f"retrieved_texts: {retrieved_texts}")
 
             # Calculate and log token usage
             total_tokens = sum(self.count_tokens(text) for text in retrieved_texts)
             logger.info(f"Total tokens in retrieved texts: {total_tokens}")
 
+            # Check if total tokens exceed the limit and truncate if necessary
+            max_context_tokens = (
+                self.max_tokens - self.count_tokens(question) - 100
+            )  # Leave some buffer
+            if total_tokens > max_context_tokens:
+                logger.warning(
+                    f"Total tokens {total_tokens} exceed max context tokens {max_context_tokens}. Truncating retrieved texts."
+                )
+                truncated_texts = []
+                current_tokens = 0
+                for text in retrieved_texts:
+                    text_tokens = self.count_tokens(text)
+                    if current_tokens + text_tokens <= max_context_tokens:
+                        truncated_texts.append(text)
+                        current_tokens += text_tokens
+                    else:
+                        break
+                retrieved_texts = truncated_texts
+                total_tokens = current_tokens
+                logger.info(f"Truncated retrieved texts to {total_tokens} tokens.")
+
             # Construct the optimized prompt
-            system_prompt = """You are an expert assistant specializing in Finnish collective agreements. 
+            system_prompt = f"""You are an expert assistant.
             Your task is to:
-            1. Carefully analyze the provided collective agreement excerpts
-            2. Find the specific sections that answer the user's question
+            1. Carefully analyze the provided document excerpts.
+            2. Find the specific sections that answer the user's question.
             3. Provide a clear, structured answer that:
-               - Directly addresses the question
-               - Cites specific sections (e.g., "According to section 21 §...")
-               - Includes all relevant details and conditions
-               - Is organized with bullet points or numbering when listing multiple criteria
-            4. If the answer cannot be found in the provided excerpts, clearly state this fact
-            
+               - Directly addresses the question.
+               - Cites specific sections when applicable.
+               - Includes all relevant details and conditions.
+               - Is organized with bullet points or numbering when listing multiple criteria.
+            4. Only state facts.
+            5. Answer in the same language as the question.
+
             Always maintain high accuracy and only use information from the provided excerpts."""
 
             user_prompt = f"""Relevant Collective Agreement Excerpts:
@@ -96,7 +118,7 @@ class ResponseGenerator:
             )
             answer = response["choices"][0]["message"]["content"].strip()
             logger.info("Response generated successfully.")
-            return answer
+            return answer, question
         except Exception as e:
             logger.error(f"Error in response generation: {str(e)}", exc_info=True)
-            return "Sorry, there was an error processing your request."
+            return f"Sorry, there was an error processing your request: {str(e)}"

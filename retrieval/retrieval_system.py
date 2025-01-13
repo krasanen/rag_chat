@@ -8,6 +8,8 @@ import logging
 import time
 import json
 from typing import List
+import torch
+import torch.nn.functional as F
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -233,24 +235,70 @@ class RetrievalSystem:
 
         return chunks
 
-    def retrieve(self, query: str, top_k: int = 5) -> List[str]:
+    def search_for_number(self, number: str) -> List[str]:
+        """
+        Directly search for text chunks containing a specific number.
+        """
+        results = []
+        for idx, text in self.id_mapping.items():
+            if number in text:
+                results.append(text)
+        return results
+
+    def extract_topics(self, query: str) -> List[str]:
+        """
+        Use OpenAI to extract potential topics from the query.
+        """
+        prompt = f"{query}"
+        system_prompt = "Extract key topics from the query and respond with a comma-separated list of single words in the same language as the query."
+
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt,
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=50,
+                temperature=0.3,
+            )
+            topics_text = response.choices[0].message["content"].strip()
+            # Assume topics are returned as a comma-separated list
+            topics = [topic.strip() for topic in topics_text.split(",")]
+            print(f"topics: {topics}")
+            return topics
+        except Exception as e:
+            logger.error(f"Error extracting topics with OpenAI: {str(e)}")
+            return []
+
+    def retrieve(self, query: str, top_k: int = 10) -> List[str]:
         """
         Retrieve the most relevant text chunks for a given query with improved context.
         """
         try:
+
             logger.info(f"Generating embedding for query: {query}")
 
+            # Use OpenAI to extract topics from the query
+            topic_results = []
+            topic_results.extend(self.extract_topics(query))
+
+            topic_results_str = " ".join(topic_results)
+
             # Generate embedding for the query
-            query_embedding = self.get_openai_embedding(query)
+            query_embedding = self.get_openai_embedding(f"{query} {topic_results_str}")
             if not query_embedding:
                 logger.error("Failed to generate embedding for query")
-                return []
+                return topic_results  # Return topic results if embedding fails
 
             # Convert embedding to correct format for FAISS
             query_embedding = np.array(query_embedding).astype("float32").reshape(1, -1)
 
             # Search the index with more neighbors to filter
-            D, I = self.index.search(query_embedding, top_k * 2)
+            D, I = self.index.search(query_embedding, top_k * 3)
 
             # Get the corresponding texts and sort by relevance score
             results = []
@@ -276,35 +324,38 @@ class RetrievalSystem:
                     )
                     seen_content.add(text_normalized)
 
-            # Sort by relevance score and take top_k
-            results.sort(key=lambda x: x["score"])
-            final_results = [r["text"] for r in results[:top_k]]
+            # Combine number, topic, and embedding results
+            combined_results = []
+            # Check if the query contains a number
+            import re
 
-            # Add section headers if available
-            final_results_with_context = []
-            for text in final_results:
-                # Try to find and include relevant section headers
-                section_header = self._find_section_header(text)
-                if section_header:
-                    final_results_with_context.append(f"{section_header}\n\n{text}")
-                else:
-                    final_results_with_context.append(text)
+            number_match = re.search(r"\d+", query)
+            if number_match:
+                number = number_match.group(0)
+                number_results = self.search_for_number(number)
+                combined_results.extend(number_results)
 
-            return final_results_with_context
+            combined_results.extend([r["text"] for r in results[:top_k]])
+
+            return combined_results
 
         except Exception as e:
             logger.error(f"Error during retrieval: {str(e)}")
             return []
 
     def _text_similarity(self, text1: str, text2: str) -> float:
-        """Simple text similarity check to avoid duplicate content"""
-        words1 = set(text1.lower().split())
-        words2 = set(text2.lower().split())
-        if not words1 or not words2:
+        """Calculates cosine similarity between two texts using their embeddings."""
+        embedding1 = self.get_openai_embedding(text1)
+        embedding2 = self.get_openai_embedding(text2)
+
+        if not embedding1 or not embedding2:
             return 0.0
-        intersection = words1.intersection(words2)
-        union = words1.union(words2)
-        return len(intersection) / len(union)
+
+        embedding1 = torch.tensor(embedding1)
+        embedding2 = torch.tensor(embedding2)
+
+        similarity = F.cosine_similarity(embedding1, embedding2, dim=0)
+        return similarity.item()
 
     def _find_section_header(self, text: str) -> str:
         """Try to find a relevant section header for the text"""

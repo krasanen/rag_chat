@@ -75,7 +75,7 @@ def index():
 
         # Retrieve relevant texts with token limit consideration
         retrieved_texts = retrieve_with_token_limit(
-            question, max_total_tokens=800, average_chunk_tokens=200
+            question, max_total_tokens=1600, average_chunk_tokens=200
         )
 
         # Generate answer
@@ -91,13 +91,13 @@ def detect_language(text):
         return "en"  # Default to English if detection fails
 
 
-def retrieve_with_token_limit(query, max_total_tokens=2000, average_chunk_tokens=400):
+def retrieve_with_token_limit(query, max_total_tokens=3000, average_chunk_tokens=500):
     """
     Retrieves more chunks with higher token limit for better context.
     """
     # Add context to the query to improve retrieval
     enhanced_query = f"""
-    Find sections related to: {query}
+    Find sections related to topic of this: {query}
     Include surrounding context and related clauses.
     Look for:
     - Direct mentions of the topic

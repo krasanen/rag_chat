@@ -1,9 +1,12 @@
 import openai
 import numpy as np
+import os
 from typing import List
 
 # Initialize OpenAI API key
-openai.api_key = "YOUR_OPENAI_API_KEY"
+openai.api_key = os.getenv("OPENAI_API_KEY")
+if not openai.api_key:
+    raise ValueError("OPENAI_API_KEY environment variable not set.")
 
 
 def get_embedding(text: str, model: str = "text-embedding-ada-002") -> List[float]:
