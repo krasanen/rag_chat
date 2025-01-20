@@ -1,15 +1,16 @@
 # retrieval/retrieval_system.py
 import os
-import faiss
-import pickle
-import openai
-import numpy as np
-import logging
-import time
 import json
-from typing import List
+import time
+import logging
+import pickle
+import numpy as np
+import faiss
+import openai
 import torch
 import torch.nn.functional as F
+from typing import List
+from sentence_transformers import SentenceTransformer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,21 +26,23 @@ class RetrievalSystem:
         cache_file: str = "embedding_cache.json",
     ):
         """
-        Initializes the RetrievalSystem.
-
-        Args:
-            chunk_dir (str): Directory containing text chunk files.
-            index_path (str): Path to save/load the FAISS index.
-            mapping_path (str): Path to save/load the ID to text mapping.
-            cache_file (str): Path to the embedding cache file.
+        Initializes the RetrievalSystem with enhanced caching and embedding strategies.
         """
+        # Basic initialization
         self.chunk_dir = chunk_dir
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set.")
         openai.api_key = self.openai_api_key
         self.dimension = 1536  # OpenAI's text-embedding-ada-002 has 1536 dimensions
+
+        # Caching configuration
         self.cache_file = cache_file
+        self.max_cache_size = 10000
+        self.embedding_cache = self._load_cache()
+
+        # Local embedding model as fallback
+        self.local_embedding_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 
         # Initialize FAISS index
         if os.path.exists(index_path) and os.path.exists(mapping_path):
@@ -61,75 +64,151 @@ class RetrievalSystem:
             self.id_mapping = {}
             self.build_index(index_path, mapping_path)
 
+    def _load_cache(self) -> dict:
+        """Load embedding cache from file, creating if not exists."""
+        try:
+            if os.path.exists(self.cache_file):
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            return {}
+        except (json.JSONDecodeError, IOError):
+            return {}
+
+    def _save_cache(self):
+        """Save embedding cache, maintaining LRU-like behavior."""
+        try:
+            # Trim cache if it gets too large
+            if len(self.embedding_cache) > self.max_cache_size:
+                # Remove oldest entries
+                sorted_cache = sorted(
+                    self.embedding_cache.items(), 
+                    key=lambda x: x[1].get('timestamp', 0)
+                )
+                for key, _ in sorted_cache[:len(self.embedding_cache) - self.max_cache_size]:
+                    del self.embedding_cache[key]
+
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
+                json.dump(self.embedding_cache, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logging.error(f"Cache save error: {e}")
+
     def get_openai_embedding(
-        self, text: str, max_retries: int = 5, backoff_factor: float = 0.5
+        self, 
+        text: str, 
+        max_retries: int = 3, 
+        use_local_fallback: bool = True
     ) -> List[float]:
         """
-        Fetches the embedding for the given text using OpenAI's API with retry logic.
-
-        Args:
-            text (str): The text to embed.
-            max_retries (int): Maximum number of retries.
-            backoff_factor (float): Factor for exponential backoff.
-
-        Returns:
-            List[float]: The embedding vector.
+        Enhanced embedding method with multiple strategies
         """
-        for attempt in range(max_retries):
-            try:
-                response = openai.Embedding.create(
-                    input=text, model="text-embedding-ada-002"
-                )
-                embedding = response["data"][0]["embedding"]
-                return embedding
-            except openai.error.RateLimitError:
-                wait_time = backoff_factor * (2**attempt)
-                logger.warning(
-                    f"Rate limit exceeded. Retrying in {wait_time} seconds..."
-                )
-                time.sleep(wait_time)
-            except openai.error.OpenAIError as e:
-                logger.error(f"OpenAI API error: {e}")
-                break  # Non-retriable error
-            except Exception as e:
-                logger.error(f"Unexpected error: {e}")
-                break  # Non-retriable error
+        # Normalize text
+        text = text.strip().replace('\n', ' ')[:2000]  # Limit length
+        
+        # Check cache first
+        if text in self.embedding_cache:
+            return self.embedding_cache[text]['embedding']
+        
+        # Try OpenAI embedding
+        try:
+            response = openai.Embedding.create(
+                input=text, 
+                model="text-embedding-ada-002"
+            )
+            embedding = response["data"][0]["embedding"]
+            
+            # Cache the embedding
+            self.embedding_cache[text] = {
+                'embedding': embedding,
+                'timestamp': time.time()
+            }
+            self._save_cache()
+            
+            return embedding
+        
+        except Exception as openai_error:
+            logging.warning(f"OpenAI embedding failed: {openai_error}")
+            
+            # Local embedding fallback
+            if use_local_fallback:
+                try:
+                    local_embedding = self.local_embedding_model.encode(text).tolist()
+                    
+                    # Cache local embedding
+                    self.embedding_cache[text] = {
+                        'embedding': local_embedding,
+                        'timestamp': time.time()
+                    }
+                    self._save_cache()
+                    
+                    return local_embedding
+                except Exception as local_error:
+                    logging.error(f"Local embedding failed: {local_error}")
+        
         return []
 
-    def get_openai_embeddings(
-        self, texts: List[str], max_retries: int = 5, backoff_factor: float = 0.5
+    def batch_get_embeddings(
+        self, 
+        texts: List[str], 
+        batch_size: int = 100
     ) -> List[List[float]]:
         """
-        Fetches embeddings for a list of texts using OpenAI's API with retry logic.
-
-        Args:
-            texts (List[str]): List of texts to embed.
-            max_retries (int): Maximum number of retries.
-            backoff_factor (float): Factor for exponential backoff.
-
-        Returns:
-            List[List[float]]: List of embedding vectors.
+        Batch embedding generation with caching and fallback
         """
-        for attempt in range(max_retries):
+        embeddings = []
+        
+        # Check cache first
+        uncached_texts = []
+        for text in texts:
+            text = text.strip().replace('\n', ' ')[:2000]
+            if text in self.embedding_cache:
+                embeddings.append(self.embedding_cache[text]['embedding'])
+            else:
+                uncached_texts.append(text)
+        
+        # Process uncached texts in batches
+        for i in range(0, len(uncached_texts), batch_size):
+            batch = uncached_texts[i:i+batch_size]
+            
             try:
+                # Try OpenAI batch embedding
                 response = openai.Embedding.create(
-                    input=texts, model="text-embedding-ada-002"
+                    input=batch, 
+                    model="text-embedding-ada-002"
                 )
-                embeddings = [data["embedding"] for data in response["data"]]
-                return embeddings
-            except openai.error.RateLimitError:
-                wait_time = backoff_factor * (2**attempt)
-                logger.warning(
-                    f"Rate limit exceeded. Retrying in {wait_time} seconds..."
-                )
-                time.sleep(wait_time)
-            except openai.error.OpenAIError as e:
-                logger.error(f"OpenAI API error: {e}")
-                break  # Non-retriable error
-            except Exception as e:
-                logger.error(f"Unexpected error: {e}")
-                break  # Non-retriable error
-        return []
+                batch_embeddings = [item['embedding'] for item in response['data']]
+                
+                # Cache batch embeddings
+                for text, embedding in zip(batch, batch_embeddings):
+                    self.embedding_cache[text] = {
+                        'embedding': embedding,
+                        'timestamp': time.time()
+                    }
+                
+                embeddings.extend(batch_embeddings)
+            
+            except Exception as openai_error:
+                logging.warning(f"OpenAI batch embedding failed: {openai_error}")
+                
+                # Local embedding fallback
+                try:
+                    local_batch_embeddings = self.local_embedding_model.encode(batch).tolist()
+                    
+                    # Cache local embeddings
+                    for text, embedding in zip(batch, local_batch_embeddings):
+                        self.embedding_cache[text] = {
+                            'embedding': embedding,
+                            'timestamp': time.time()
+                        }
+                    
+                    embeddings.extend(local_batch_embeddings)
+                
+                except Exception as local_error:
+                    logging.error(f"Local batch embedding failed: {local_error}")
+        
+        # Save cache periodically
+        self._save_cache()
+        
+        return embeddings
 
     def build_index(self, index_path: str, mapping_path: str, batch_size: int = 10):
         """
@@ -167,7 +246,7 @@ class RetrievalSystem:
                             texts.append(chunk)
                             file_indices.append(idx)
                             if len(texts) == batch_size:
-                                embeddings = self.get_openai_embeddings(texts)
+                                embeddings = self.batch_get_embeddings(texts)
                                 for i, embedding in enumerate(embeddings):
                                     if not embedding:
                                         continue
@@ -183,7 +262,7 @@ class RetrievalSystem:
                     logger.error(f"Error processing {chunk_file}: {e}")
         # Process remaining texts
         if texts:
-            embeddings = self.get_openai_embeddings(texts)
+            embeddings = self.batch_get_embeddings(texts)
             for i, embedding in enumerate(embeddings):
                 if not embedding:
                     continue
@@ -202,9 +281,9 @@ class RetrievalSystem:
 
     def create_semantic_chunks(self, text, max_tokens=800, overlap=200):
         """
-        Creates semantic chunks with larger size and overlap to maintain context.
+        Advanced semantic chunking with more intelligent splitting
         """
-        # Split by sections first
+        # Split by sections first, with more context preservation
         sections = text.split("\n\n")
         chunks = []
         current_chunk = []
@@ -215,25 +294,119 @@ class RetrievalSystem:
             if not section:
                 continue
 
-            # Estimate section length
-            section_length = len(section.split())
+            # Split section into sentences
+            sentences = section.split(". ")
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
 
-            if current_length + section_length > max_tokens and current_chunk:
-                # Join with double newlines to preserve formatting
-                chunks.append("\n\n".join(current_chunk))
-                # Keep significant overlap for context
-                current_chunk = (
-                    current_chunk[-2:] if len(current_chunk) > 2 else current_chunk[-1:]
-                )
-                current_length = sum(len(p.split()) for p in current_chunk)
+                # Estimate sentence length
+                sentence_length = len(sentence.split())
 
-            current_chunk.append(section)
-            current_length += section_length
+                # More sophisticated chunk management
+                if current_length + sentence_length > max_tokens and current_chunk:
+                    # Join with spaces to preserve formatting
+                    chunks.append(" ".join(current_chunk) + ".")
+
+                    # Keep more context for overlap
+                    current_chunk = (
+                        current_chunk[-5:] if len(current_chunk) > 5 else current_chunk
+                    )
+                    current_length = sum(len(p.split()) for p in current_chunk)
+
+                current_chunk.append(sentence)
+                current_length += sentence_length
 
         if current_chunk:
-            chunks.append("\n\n".join(current_chunk))
+            chunks.append(" ".join(current_chunk) + ".")
 
+        logger.info(f"Created {len(chunks)} semantic chunks")
         return chunks
+
+    def extract_topics(self, query: str) -> List[str]:
+        """
+        Improved topic extraction with more context-aware prompting.
+        """
+        system_prompt = f"""
+        You are an expert at extracting key semantic topics from a query in Finnish.
+        Extract 2-3 most important keywords that capture the semantic meaning.
+        Focus on nouns and key concepts that represent the core of the query.
+        """
+
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": query},
+                ],
+                max_tokens=30,
+                temperature=0.2,
+            )
+            topics_text = response.choices[0].message["content"].strip()
+            topics = [topic.strip() for topic in topics_text.split(",")]
+            logger.info(f"Extracted topics: {topics}")
+            return topics
+        except Exception as e:
+            logger.error(f"Error extracting topics: {str(e)}")
+            return []
+
+    def retrieve(self, query: str, top_k: int = 10) -> List[str]:
+        """
+        Enhanced retrieval with multiple strategies
+        """
+        try:
+            # Generate primary query embedding with batch processing
+            query_embedding = self.get_openai_embedding(query)
+            
+            # Optional: Generate topic-enhanced embedding
+            topics = self.extract_topics(query)
+            if topics:
+                topic_embedding = self.get_openai_embedding(" ".join(topics))
+                # Weighted combination of embeddings
+                query_embedding = np.mean(
+                    [np.array(query_embedding), np.array(topic_embedding)], axis=0
+                )
+
+            query_embedding = np.array(query_embedding).astype("float32").reshape(1, -1)
+
+            # Perform similarity search
+            D, I = self.index.search(query_embedding, top_k * 3)
+
+            # Filter and rank results
+            results = [self.id_mapping[idx] for idx in I[0] if idx in self.id_mapping]
+
+            # Optional: Re-rank results using semantic similarity
+            results = sorted(
+                results, key=lambda x: self._text_similarity(x, query), reverse=True
+            )
+
+            logger.info(f"Retrieved {len(results)} chunks")
+            return results[:top_k]
+        
+        except Exception as e:
+            logger.error(f"Retrieval error: {str(e)}")
+            return []
+
+    def _text_similarity(self, text1: str, text2: str) -> float:
+        """
+        Calculate cosine similarity between two texts using their embeddings
+        """
+        try:
+            # Generate embeddings for both texts
+            emb1 = self.get_openai_embedding(text1)
+            emb2 = self.get_openai_embedding(text2)
+
+            # Calculate cosine similarity
+            emb1_norm = np.array(emb1) / np.linalg.norm(emb1)
+            emb2_norm = np.array(emb2) / np.linalg.norm(emb2)
+
+            similarity = np.dot(emb1_norm, emb2_norm)
+            return similarity
+        except Exception as e:
+            logger.error(f"Similarity calculation error: {str(e)}")
+            return 0.0
 
     def search_for_number(self, number: str) -> List[str]:
         """
@@ -244,118 +417,6 @@ class RetrievalSystem:
             if number in text:
                 results.append(text)
         return results
-
-    def extract_topics(self, query: str) -> List[str]:
-        """
-        Use OpenAI to extract potential topics from the query.
-        """
-        prompt = f"{query}"
-        system_prompt = "Extract key topics from the query and respond with a comma-separated list of single words in the same language as the query."
-
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt,
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=50,
-                temperature=0.3,
-            )
-            topics_text = response.choices[0].message["content"].strip()
-            # Assume topics are returned as a comma-separated list
-            topics = [topic.strip() for topic in topics_text.split(",")]
-            print(f"topics: {topics}")
-            return topics
-        except Exception as e:
-            logger.error(f"Error extracting topics with OpenAI: {str(e)}")
-            return []
-
-    def retrieve(self, query: str, top_k: int = 10) -> List[str]:
-        """
-        Retrieve the most relevant text chunks for a given query with improved context.
-        """
-        try:
-
-            logger.info(f"Generating embedding for query: {query}")
-
-            # Use OpenAI to extract topics from the query
-            topic_results = []
-            topic_results.extend(self.extract_topics(query))
-
-            topic_results_str = " ".join(topic_results)
-
-            # Generate embedding for the query
-            query_embedding = self.get_openai_embedding(f"{query} {topic_results_str}")
-            if not query_embedding:
-                logger.error("Failed to generate embedding for query")
-                return topic_results  # Return topic results if embedding fails
-
-            # Convert embedding to correct format for FAISS
-            query_embedding = np.array(query_embedding).astype("float32").reshape(1, -1)
-
-            # Search the index with more neighbors to filter
-            D, I = self.index.search(query_embedding, top_k * 3)
-
-            # Get the corresponding texts and sort by relevance score
-            results = []
-            seen_content = set()  # To avoid duplicate content
-
-            for score, idx in zip(D[0], I[0]):
-                if idx in self.id_mapping:
-                    text = self.id_mapping[idx]
-
-                    # Skip if too similar to already included content
-                    text_normalized = " ".join(text.split())  # Normalize whitespace
-                    if any(
-                        self._text_similarity(text_normalized, seen) > 0.8
-                        for seen in seen_content
-                    ):
-                        continue
-
-                    results.append(
-                        {
-                            "text": text,
-                            "score": float(score),  # Convert to float for sorting
-                        }
-                    )
-                    seen_content.add(text_normalized)
-
-            # Combine number, topic, and embedding results
-            combined_results = []
-            # Check if the query contains a number
-            import re
-
-            number_match = re.search(r"\d+", query)
-            if number_match:
-                number = number_match.group(0)
-                number_results = self.search_for_number(number)
-                combined_results.extend(number_results)
-
-            combined_results.extend([r["text"] for r in results[:top_k]])
-
-            return combined_results
-
-        except Exception as e:
-            logger.error(f"Error during retrieval: {str(e)}")
-            return []
-
-    def _text_similarity(self, text1: str, text2: str) -> float:
-        """Calculates cosine similarity between two texts using their embeddings."""
-        embedding1 = self.get_openai_embedding(text1)
-        embedding2 = self.get_openai_embedding(text2)
-
-        if not embedding1 or not embedding2:
-            return 0.0
-
-        embedding1 = torch.tensor(embedding1)
-        embedding2 = torch.tensor(embedding2)
-
-        similarity = F.cosine_similarity(embedding1, embedding2, dim=0)
-        return similarity.item()
 
     def _find_section_header(self, text: str) -> str:
         """Try to find a relevant section header for the text"""

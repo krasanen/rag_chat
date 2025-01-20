@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class ResponseGenerator:
 
     def __init__(
-        self, openai_api_key: str, model: str = "gpt-3.5-turbo", max_tokens: int = 1024
+        self, openai_api_key: str, model: str = "gpt-4o", max_tokens: int = 1024
     ):
         """
         Initializes the ResponseGenerator.

@@ -1,11 +1,12 @@
 flask
-faiss-cpu
 cohere
 transformers
 sentence-transformers
 pdfminer.six
 langdetect
-openai==0.28
 python-dotenv
 numpy
+faiss-cpu
+openai
 tiktoken
+torch

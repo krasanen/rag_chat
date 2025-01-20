@@ -32,10 +32,9 @@ def initialize_system():
         print("PDF to Text Conversion...")
         utils.pdf_to_text.convert_pdfs_to_text("source_pdfs", "source_txts")
 
+        # Initialize Retrieval System with OpenAI API Key
         print("Text Splitting...")
         utils.split_text.process_texts("source_txts", "source_chunks")
-
-        # Initialize Retrieval System with OpenAI API Key
         cohere_api_key = os.getenv("OPENAI_API_KEY")
         if not cohere_api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set.")
@@ -49,7 +48,7 @@ def initialize_system():
         # Initialize Response Generator with OpenAI API Key
         generator = ResponseGenerator(
             openai_api_key=cohere_api_key,
-            model="gpt-4",  # Use GPT-4 instead of GPT-3.5
+            model="gpt-4o",
             max_tokens=2048,
         )  # Adjust max_tokens as needed
 
