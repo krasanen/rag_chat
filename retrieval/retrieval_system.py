@@ -359,7 +359,7 @@ class RetrievalSystem:
         try:
             # Generate primary query embedding with batch processing
             query_embedding = self.get_openai_embedding(query)
-            
+
             # Optional: Generate topic-enhanced embedding
             topics = self.extract_topics(query)
             if topics:
@@ -385,6 +385,7 @@ class RetrievalSystem:
             logger.info(f"Retrieved {len(results)} chunks")
             return results[:top_k]
         
+
         except Exception as e:
             logger.error(f"Retrieval error: {str(e)}")
             return []
