@@ -120,3 +120,4 @@ dmypy.json
 # source chunks and texts
 source_chunks/
 source_txts/
+embedding_cache.json
