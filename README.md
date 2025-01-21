@@ -26,7 +26,7 @@ docker-compose up --build
 
 ### 3. Accessing the Application
 Open your browser and navigate to:
-http://localhost:8501
+http://localhost:8502
 
 ### 4. Local Development
 ```bash

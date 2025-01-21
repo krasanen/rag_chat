@@ -32,10 +32,10 @@ RUN pip install --upgrade pip \
 COPY . .
 
 # Expose Streamlit port
-EXPOSE 8501
+EXPOSE 8502
 
 # Set environment variable for Streamlit
-ENV STREAMLIT_SERVER_PORT=8501
+ENV STREAMLIT_SERVER_PORT=8502
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
 # Run Streamlit app

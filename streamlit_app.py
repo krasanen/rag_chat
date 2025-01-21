@@ -1,6 +1,8 @@
 import os
 import streamlit as st
 from dotenv import load_dotenv
+import utils.pdf_to_text
+import utils.split_text
 
 # Import local modules
 from retrieval.retrieval_system import RetrievalSystem
@@ -11,7 +13,23 @@ load_dotenv()
 
 
 def initialize_system():
-    """Initialize the retrieval and generation systems."""
+
+    # check if source chunks directory has text files
+
+    if os.path.exists("source_chunks") and len(os.listdir("source_chunks")) > 1:
+        print("Using existing chunks and index...")
+    else:
+        print("Creating chunks and index...")
+        os.makedirs("source_chunks", exist_ok=True)
+        print("PDF to Text Conversion...")
+        utils.pdf_to_text.convert_pdfs_to_text("source_pdfs", "source_txts")
+        print("Text Splitting...")
+        utils.split_text.process_texts("source_txts", "source_chunks")
+        os.remove("faiss.index")
+        os.remove("id_mapping.pkl")
+        os.remove("embedding_cache.json")
+
+    """Initializing the retrieval and generation systems."""
     # Initialize Retrieval System
     retrieval = RetrievalSystem(
         chunk_dir="source_chunks",
@@ -38,6 +56,8 @@ def main():
 
     # Initialize systems
     retrieval, generator = initialize_system()
+
+    """Ready for user interaction."""
 
     # Initialize session state for chat history
     if "messages" not in st.session_state:
