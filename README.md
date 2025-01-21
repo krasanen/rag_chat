@@ -1,21 +1,43 @@
-# Architecture
-see architecture.md
+# RAG Chatbot
 
-# Building and running the application on docker container, replace your_cohere_api_key with yours
-docker build -t rag_chatbot .
-docker run -d -p 8000:8000 --name=rag_chatbox --env OPENAI_API_KEY=xxx rag_chatbot
-docker logs -f rag_chatbox
+## Features
+- Conversational AI with context retention
+- Document retrieval and question answering
+- Streamlit-based interactive UI
+- Docker and Docker Compose support
 
-# for testing it browse to
-http://localhost:8000
+## Prerequisites
+- Docker
+- Docker Compose
+- OpenAI API Key
 
-# for developement
+## Setup
+
+### 1. Environment Configuration
+Create a `.env` file in the project root:
+```
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+### 2. Running with Docker Compose
+```bash
+docker-compose up --build
+```
+
+### 3. Accessing the Application
+Open your browser and navigate to:
+http://localhost:8501
+
+### 4. Local Development
+```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-python app.py
+streamlit run streamlit_app.py
+```
 
-# improvements ideas that came along development
-- thread starting so we could show starting page while retrievalsystem index is being build
-- cache indexes for faster start
-- health check checking status endpoint frequently and restarting container on error
+## Improvements
+- Conversation history persistence
+- Enhanced context retrieval
+- Multi-language support
+- Advanced document indexing

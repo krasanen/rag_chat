@@ -1,0 +1,34 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+venv
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDEs and editors
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.log
+.env
+huggingface_cache
+source_pdfs
+source_txts
+source_chunks

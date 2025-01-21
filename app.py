@@ -139,6 +139,42 @@ def error_page():
     )
 
 
+@app.route('/query', methods=['POST'])
+def query():
+    try:
+        # Get query from request
+        data = request.get_json()
+        query = data.get('query', '')
+        language = data.get('language', 'fi')
+
+        # Validate query
+        if not query:
+            return jsonify({"error": "No query provided"}), 400
+
+        # Retrieve relevant texts
+        retrieved_texts = retrieval.retrieve(query)
+
+        # Generate response with conversation context
+        previous_context = data.get('previous_context', None)
+        response, original_query = generator.generate(
+            retrieved_texts, 
+            query, 
+            language=language, 
+            previous_context=previous_context
+        )
+
+        # Return response
+        return jsonify({
+            "response": response,
+            "original_query": original_query,
+            "retrieved_texts": retrieved_texts
+        })
+
+    except Exception as e:
+        logging.error(f"Error in query processing: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == '__main__':
     # Start the initialization in a separate thread
     init_thread = threading.Thread(target=initialize_system)
