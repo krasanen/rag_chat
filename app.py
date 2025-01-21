@@ -32,10 +32,9 @@ def initialize_system():
         print("PDF to Text Conversion...")
         utils.pdf_to_text.convert_pdfs_to_text("source_pdfs", "source_txts")
 
+        # Initialize Retrieval System with OpenAI API Key
         print("Text Splitting...")
         utils.split_text.process_texts("source_txts", "source_chunks")
-
-        # Initialize Retrieval System with OpenAI API Key
         cohere_api_key = os.getenv("OPENAI_API_KEY")
         if not cohere_api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set.")
@@ -48,7 +47,9 @@ def initialize_system():
 
         # Initialize Response Generator with OpenAI API Key
         generator = ResponseGenerator(
-            openai_api_key=cohere_api_key, model="gpt-3.5-turbo", max_tokens=2048
+            openai_api_key=cohere_api_key,
+            model="gpt-4o",
+            max_tokens=2048,
         )  # Adjust max_tokens as needed
 
         # Set initialization flag to True
@@ -73,7 +74,7 @@ def index():
 
         # Retrieve relevant texts with token limit consideration
         retrieved_texts = retrieve_with_token_limit(
-            question, max_total_tokens=800, average_chunk_tokens=200
+            question, max_total_tokens=1600, average_chunk_tokens=200
         )
 
         # Generate answer
@@ -89,23 +90,23 @@ def detect_language(text):
         return "en"  # Default to English if detection fails
 
 
-def retrieve_with_token_limit(query, max_total_tokens=800, average_chunk_tokens=200):
+def retrieve_with_token_limit(query, max_total_tokens=3000, average_chunk_tokens=500):
     """
-    Retrieves the maximum number of chunks without exceeding the token limit.
-
-    Args:
-        query (str): User's question.
-        max_total_tokens (int): Maximum tokens allowed for retrieved texts.
-        average_chunk_tokens (int): Average tokens per chunk (estimate).
-
-    Returns:
-        List[str]: List of retrieved text chunks.
+    Retrieves more chunks with higher token limit for better context.
     """
-    # Estimate how many chunks can fit
+    # Add context to the query to improve retrieval
+    enhanced_query = f"""
+    Find sections related to topic of this: {query}
+    Include surrounding context and related clauses.
+    Look for:
+    - Direct mentions of the topic
+    - Related conditions and requirements
+    - Exceptions and special cases
+    - Cross-references to other sections
+    """
+
     max_chunks = max_total_tokens // average_chunk_tokens
-
-    # Retrieve more chunks than needed to allow for variable lengths
-    retrieved_chunks = retrieval.retrieve(query, top_k=max_chunks * 2)
+    retrieved_chunks = retrieval.retrieve(enhanced_query, top_k=max_chunks * 2)
 
     selected_chunks = []
     current_token_count = 0

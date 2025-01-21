@@ -13,6 +13,7 @@ http://localhost:8000
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+python app.py
 
 # improvements ideas that came along development
 - thread starting so we could show starting page while retrievalsystem index is being build

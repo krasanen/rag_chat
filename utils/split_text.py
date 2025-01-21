@@ -2,11 +2,13 @@
 import os
 from transformers import GPT2Tokenizer
 
-def split_text(text, max_length=500):
+
+def split_text(text, max_length=400):
     tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
     tokens = tokenizer.encode(text)
     chunks = [tokens[i:i + max_length] for i in range(0, len(tokens), max_length)]
-    return [tokenizer.decode(chunk) for chunk in chunks]
+    return [tokenizer.decode(chunk) for chunk in chunks if chunk]
+
 
 def process_texts(txt_dir, chunk_dir):
     os.makedirs(chunk_dir, exist_ok=True)

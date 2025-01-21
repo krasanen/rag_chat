@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class ResponseGenerator:
 
     def __init__(
-        self, openai_api_key: str, model: str = "gpt-3.5-turbo", max_tokens: int = 1024
+        self, openai_api_key: str, model: str = "gpt-4o", max_tokens: int = 1024
     ):
         """
         Initializes the ResponseGenerator.
@@ -49,69 +49,76 @@ class ResponseGenerator:
     ) -> str:
         """
         Generates a response based on retrieved texts and the user's question.
-
-        Args:
-            retrieved_texts (List[str]): List of relevant text chunks.
-            question (str): User's question.
-            language (str): Language code ('fi' for Finnish, 'en' for English).
-
-        Returns:
-            str: Generated answer from the model.
         """
-        # Construct the optimized prompt
-        prompt = "Collective Agreement Information Assistant\n"
-        prompt += f"Language: {'Finnish' if language == 'fi' else 'English'}\n"
-        prompt += (
-            "You are an expert in interpreting and summarizing collective agreements. "
-            "Answer the user's question using only information from the following collective agreement excerpts. "
-            "Summarize the relevant clauses in a clear and detailed manner, referring to specific sections when possible.\n\n"
-        )
-
-        # Add retrieved texts to the prompt
-        prompt += "Relevant Collective Agreement Excerpts:\n"
-        for text in retrieved_texts:
-            prompt += f"- {text}\n"
-
-        prompt += f"\nUser's Question: {question}\nAnswer in detail, mentioning relevant clauses or sections if available:"
-
-        # Count tokens in the prompt
-        prompt_token_count = self.count_tokens(prompt)
-        logger.info(f"Prompt token count: {prompt_token_count}")
-
-        # Define model's max token limit
-        model_max_tokens = 4096  # Adjust based on the model you're using
-
-        # Calculate allowable tokens for the response
-        response_max_tokens = (
-            self.max_tokens - prompt_token_count - 50
-        )  # Buffer of 50 tokens
-
-        if response_max_tokens <= 0:
-            logger.error("Prompt is too long for the model's maximum token limit.")
-            return "Sorry, your request is too long to process."
-
         try:
-            # Call OpenAI's API
+            # Log the retrieval results
+            logger.info(f"Question: {question}")
+            logger.info(f"Number of retrieved chunks: {len(retrieved_texts)}")
+            logger.info(f"retrieved_texts: {retrieved_texts}")
+
+            # Calculate and log token usage
+            total_tokens = sum(self.count_tokens(text) for text in retrieved_texts)
+            logger.info(f"Total tokens in retrieved texts: {total_tokens}")
+
+            # Check if total tokens exceed the limit and truncate if necessary
+            max_context_tokens = (
+                self.max_tokens - self.count_tokens(question) - 100
+            )  # Leave some buffer
+            if total_tokens > max_context_tokens:
+                logger.warning(
+                    f"Total tokens {total_tokens} exceed max context tokens {max_context_tokens}. Truncating retrieved texts."
+                )
+                truncated_texts = []
+                current_tokens = 0
+                for text in retrieved_texts:
+                    text_tokens = self.count_tokens(text)
+                    if current_tokens + text_tokens <= max_context_tokens:
+                        truncated_texts.append(text)
+                        current_tokens += text_tokens
+                    else:
+                        break
+                retrieved_texts = truncated_texts
+                total_tokens = current_tokens
+                logger.info(f"Truncated retrieved texts to {total_tokens} tokens.")
+
+            # Construct the optimized prompt
+            system_prompt = f"""You are an expert assistant.
+            Your task is to:
+            1. Carefully analyze the provided document excerpts.
+            2. Find the specific sections that answer the user's question.
+            3. Provide a clear, structured answer that:
+               - Directly addresses the question.
+               - Cites specific sections when applicable.
+               - Includes all relevant details and conditions.
+               - Is organized with bullet points or numbering when listing multiple criteria.
+            4. Only state facts.
+            5. Answer in the same language as the question.
+
+            Always maintain high accuracy and only use information from the provided excerpts."""
+
+            user_prompt = f"""Relevant Collective Agreement Excerpts:
+            {'-' * 40}
+            {chr(10).join(retrieved_texts)}
+            {'-' * 40}
+
+            Question: {question}
+
+            Please provide a detailed answer based only on the above excerpts. Include section numbers and quote relevant parts when applicable."""
+
             response = openai.ChatCompletion.create(
                 model=self.model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant with expertise in labor agreements and legal documentation.",
-                    },
-                    {"role": "user", "content": prompt},
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=response_max_tokens,
-                temperature=0.3,
-                n=1,
-                stop=None,
+                max_tokens=self.max_tokens,
+                temperature=0.3,  # Keep this low for factual responses
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
             )
             answer = response["choices"][0]["message"]["content"].strip()
             logger.info("Response generated successfully.")
-            return answer
-        except openai.error.OpenAIError as e:
-            logger.error(f"OpenAI API error: {e}")
-            return "Sorry, there was an error processing your request."
+            return answer, question
         except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            return "An unexpected error occurred. Please try again later."
+            logger.error(f"Error in response generation: {str(e)}", exc_info=True)
+            return f"Sorry, there was an error processing your request: {str(e)}"
