@@ -1,5 +1,5 @@
 # generation/generate_response.py
-from typing import List, Optional
+from typing import List, Optional, Generator, Union
 import openai
 import tiktoken
 import logging
@@ -28,10 +28,10 @@ class ResponseGenerator:
         openai.api_key = self.openai_api_key
         self.model = model
         self.max_tokens = max_tokens
-
+        
         # Initialize tokenizer
         self.encoding = tiktoken.get_encoding("gpt2")
-
+        
         # Conversation history management
         self.max_conversation_history = max_conversation_history
         self.conversation_history = []
@@ -76,7 +76,7 @@ class ResponseGenerator:
             "user": user_query,
             "bot": bot_response
         })
-
+        
         # Trim conversation history if it exceeds max_conversation_history
         if len(self.conversation_history) > self.max_conversation_history:
             self.conversation_history = self.conversation_history[-self.max_conversation_history:]
@@ -87,7 +87,7 @@ class ResponseGenerator:
         question: str, 
         language: Optional[str] = None, 
         previous_context: Optional[str] = None
-    ) -> str:
+    ) -> Union[str, Generator[str, None, None]]:
         """
         Generates a response based on retrieved texts and the user's question.
 
@@ -98,7 +98,7 @@ class ResponseGenerator:
             previous_context (str, optional): Additional context from previous interactions.
 
         Returns:
-            str: Generated response.
+            Union[str, Generator[str, None, None]]: Generated response or token generator.
         """
         try:
             # Log the retrieval results
@@ -154,10 +154,10 @@ class ResponseGenerator:
             history_context = ""
             for interaction in self.conversation_history:
                 history_context += f"User: {interaction['user']}\nBot: {interaction['bot']}\n\n"
-
+            
             # Combine all context sources
             full_context = f"{history_context}\n{previous_context or ''}\n{context}"
-
+            
             # Prepare messages for OpenAI API
             messages = [
                 {
@@ -169,22 +169,30 @@ class ResponseGenerator:
                     "content": f"Context:\n{full_context}\n\nQuestion: {question}",
                 },
             ]
-
-            # Generate response
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=self.max_tokens
-            )
-
-            bot_response = response.choices[0].message.content.strip()
-
-            # Add to conversation history
-            self.add_to_conversation_history(question, bot_response)
-
-            logger.info("Response generated successfully.")
-            return bot_response, question
-
+            
+            # Generate response with streaming
+            def token_generator():
+                full_response = ""
+                for chunk in openai.ChatCompletion.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=self.max_tokens,
+                    stream=True
+                ):
+                    if chunk['choices'][0]['finish_reason'] is not None:
+                        break
+                    
+                    token = chunk['choices'][0]['delta'].get('content', '')
+                    if token:
+                        full_response += token
+                        yield token
+                
+                # Add to conversation history after full generation
+                self.add_to_conversation_history(question, full_response)
+                logger.info("Response generated successfully.")
+            
+            return token_generator()
+        
         except Exception as e:
             logger.error(f"Error in response generation: {str(e)}", exc_info=True)
             return f"Sorry, there was an error processing your request: {str(e)}"

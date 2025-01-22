@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import utils.pdf_to_text
 import utils.split_text
 import uuid
+import time
 
 # Import local modules
 from retrieval.retrieval_system import RetrievalSystem
@@ -52,8 +53,8 @@ def initialize_system():
 
 
 def main():
-    st.set_page_config(page_title="RAG Chatbot", page_icon="💬")
-    st.title("Finnish Collective Agreements Chatbot 💬")
+    st.set_page_config(page_title="RAG Chatbot", page_icon="")
+    st.title("Finnish Collective Agreements Chatbot ")
 
     # Initialize systems
     retrieval, generator = initialize_system()
@@ -98,19 +99,29 @@ def main():
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
 
+        # time retrieval
+        start_time = time.time()
         # Retrieve relevant texts
         retrieved_texts = retrieval.retrieve(prompt)
+        end_time = time.time()
+        print(f"Retrieval time: {end_time - start_time} seconds")
 
-        # Generate response with conversation history context
-        response, _ = generator.generate(
-            retrieved_texts,
-            prompt,
-            previous_context=conversation_history_context,
-        )
-
-        # Display assistant response in chat message container
+        # Create a placeholder for the assistant's response
         with st.chat_message("assistant"):
-            st.markdown(response)
+            response_placeholder = st.empty()
+            response_text = ""
+
+            # Generate response with streaming
+            token_generator = generator.generate(
+                retrieved_texts,
+                prompt,
+                previous_context=conversation_history_context,
+            )
+
+            # Stream tokens to the response placeholder
+            for token in token_generator:
+                response_text += token
+                response_placeholder.markdown(response_text)
 
             # Show retrieved context in sidebar
             st.sidebar.markdown("### Retrieved Texts:")
@@ -128,7 +139,7 @@ def main():
         st.session_state.messages.append(
             {
                 "role": "assistant",
-                "content": response,
+                "content": response_text,
                 "retrieved_texts": retrieved_texts,
             }
         )
