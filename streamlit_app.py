@@ -3,6 +3,7 @@ import streamlit as st
 from dotenv import load_dotenv
 import utils.pdf_to_text
 import utils.split_text
+import uuid
 
 # Import local modules
 from retrieval.retrieval_system import RetrievalSystem
@@ -13,9 +14,7 @@ load_dotenv()
 
 
 def initialize_system():
-
     # check if source chunks directory has text files
-
     if os.path.exists("source_chunks") and len(os.listdir("source_chunks")) > 1:
         print("Using existing chunks and index...")
     else:
@@ -25,9 +24,11 @@ def initialize_system():
         utils.pdf_to_text.convert_pdfs_to_text("source_pdfs", "source_txts")
         print("Text Splitting...")
         utils.split_text.process_texts("source_txts", "source_chunks")
-        os.remove("faiss.index")
-        os.remove("id_mapping.pkl")
-        os.remove("embedding_cache.json")
+
+        # Safely remove files if they exist
+        for file in ["faiss.index", "id_mapping.pkl", "embedding_cache.json"]:
+            if os.path.exists(file):
+                os.remove(file)
 
     """Initializing the retrieval and generation systems."""
     # Initialize Retrieval System
@@ -43,7 +44,7 @@ def initialize_system():
     generator = ResponseGenerator(
         openai_api_key=openai_api_key,
         model="gpt-4o",
-        max_tokens=2048,
+        max_tokens=4096,
         max_conversation_history=10,  # Increased for Streamlit UI
     )
 
@@ -74,12 +75,14 @@ def main():
             # If it's a bot message, show retrieved context in sidebar
             if message["role"] == "assistant" and "retrieved_texts" in message:
                 st.sidebar.markdown("### Retrieved Texts:")
-                for idx, text in enumerate(message["retrieved_texts"], 1):
+                for idx, text in enumerate(message.get("retrieved_texts", []), 1):
+                    # Generate a unique key for each text area
+                    unique_key = f"context_{uuid.uuid4()}"
                     st.sidebar.text_area(
                         f"Context {idx}",
                         value=text,
                         height=100,
-                        key=f"context_{len(st.session_state.messages)}_{idx}",
+                        key=unique_key,
                     )
 
     # React to user input
@@ -87,14 +90,27 @@ def main():
         # Display user message in chat message container
         st.chat_message("user").markdown(prompt)
 
+        # Prepare conversation history context
+        conversation_history_context = "\n".join(
+            [
+                f"User: {msg['content']}"
+                for msg in st.session_state.messages
+                if msg["role"] == "user"
+            ]
+        )
+
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
 
         # Retrieve relevant texts
         retrieved_texts = retrieval.retrieve(prompt)
 
-        # Generate response
-        response, _ = generator.generate(retrieved_texts, prompt, language="fi")
+        # Generate response with conversation history context
+        response, _ = generator.generate(
+            retrieved_texts,
+            prompt,
+            previous_context=conversation_history_context,
+        )
 
         # Display assistant response in chat message container
         with st.chat_message("assistant"):
@@ -103,11 +119,13 @@ def main():
             # Show retrieved context in sidebar
             st.sidebar.markdown("### Retrieved Texts:")
             for idx, text in enumerate(retrieved_texts, 1):
+                # Generate a unique key for each text area
+                unique_key = f"context_{uuid.uuid4()}"
                 st.sidebar.text_area(
                     f"Context {idx}",
                     value=text,
                     height=100,
-                    key=f"context_{len(st.session_state.messages)}_{idx}",
+                    key=unique_key,
                 )
 
         # Add assistant response to chat history

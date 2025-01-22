@@ -3,6 +3,7 @@ from typing import List, Optional
 import openai
 import tiktoken
 import logging
+from langdetect import detect, LangDetectException
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +48,22 @@ class ResponseGenerator:
         """
         return len(self.encoding.encode(text))
 
+    def detect_language(self, text: str) -> str:
+        """
+        Detect the language of the given text.
+
+        Args:
+            text (str): Text to detect language for.
+
+        Returns:
+            str: Two-letter language code (default to 'en' if detection fails).
+        """
+        try:
+            return detect(text)
+        except LangDetectException:
+            logger.warning(f"Language detection failed for text: {text}")
+            return 'en'
+
     def add_to_conversation_history(self, user_query: str, bot_response: str):
         """
         Adds a user query and bot response to the conversation history.
@@ -68,7 +85,7 @@ class ResponseGenerator:
         self, 
         retrieved_texts: List[str], 
         question: str, 
-        language: str = "fi", 
+        language: Optional[str] = None, 
         previous_context: Optional[str] = None
     ) -> str:
         """
@@ -77,7 +94,7 @@ class ResponseGenerator:
         Args:
             retrieved_texts (List[str]): Relevant texts for context.
             question (str): User's question.
-            language (str, optional): Language of the response. Defaults to "fi".
+            language (str, optional): Specific language to respond in. If None, auto-detect.
             previous_context (str, optional): Additional context from previous interactions.
 
         Returns:
@@ -88,6 +105,22 @@ class ResponseGenerator:
             logger.info(f"Question: {question}")
             logger.info(f"Number of retrieved chunks: {len(retrieved_texts)}")
             logger.info(f"retrieved_texts: {retrieved_texts}")
+
+            # Detect language if not specified
+            if not language:
+                language = self.detect_language(question)
+            
+            # Language mapping for OpenAI
+            language_map = {
+                'fi': 'Finnish',
+                'en': 'English',
+                'sv': 'Swedish',
+                'ru': 'Russian',
+                'de': 'German'
+            }
+            
+            # Fallback to English if language not in map
+            language_name = language_map.get(language, 'English')
 
             # Calculate and log token usage
             total_tokens = sum(self.count_tokens(text) for text in retrieved_texts)
@@ -127,7 +160,7 @@ class ResponseGenerator:
             
             # Prepare messages for OpenAI API
             messages = [
-                {"role": "system", "content": f"You are a helpful assistant responding in {language}. Use the provided context to answer the question precisely."},
+                {"role": "system", "content": f"You are a helpful assistant responding in {language_name}. Use the provided context to answer the question precisely."},
                 {"role": "user", "content": f"Context:\n{full_context}\n\nQuestion: {question}"}
             ]
             
