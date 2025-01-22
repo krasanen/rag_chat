@@ -28,10 +28,10 @@ class ResponseGenerator:
         openai.api_key = self.openai_api_key
         self.model = model
         self.max_tokens = max_tokens
-        
+
         # Initialize tokenizer
         self.encoding = tiktoken.get_encoding("gpt2")
-        
+
         # Conversation history management
         self.max_conversation_history = max_conversation_history
         self.conversation_history = []
@@ -76,7 +76,7 @@ class ResponseGenerator:
             "user": user_query,
             "bot": bot_response
         })
-        
+
         # Trim conversation history if it exceeds max_conversation_history
         if len(self.conversation_history) > self.max_conversation_history:
             self.conversation_history = self.conversation_history[-self.max_conversation_history:]
@@ -109,7 +109,7 @@ class ResponseGenerator:
             # Detect language if not specified
             if not language:
                 language = self.detect_language(question)
-            
+
             # Language mapping for OpenAI
             language_map = {
                 'fi': 'Finnish',
@@ -118,7 +118,7 @@ class ResponseGenerator:
                 'ru': 'Russian',
                 'de': 'German'
             }
-            
+
             # Fallback to English if language not in map
             language_name = language_map.get(language, 'English')
 
@@ -149,36 +149,42 @@ class ResponseGenerator:
 
             # Prepare context from retrieved texts
             context = "\n".join(retrieved_texts)
-            
+
             # Prepare conversation history context
             history_context = ""
             for interaction in self.conversation_history:
                 history_context += f"User: {interaction['user']}\nBot: {interaction['bot']}\n\n"
-            
+
             # Combine all context sources
             full_context = f"{history_context}\n{previous_context or ''}\n{context}"
-            
+
             # Prepare messages for OpenAI API
             messages = [
-                {"role": "system", "content": f"You are a helpful assistant responding in {language_name}. Use the provided context to answer the question precisely."},
-                {"role": "user", "content": f"Context:\n{full_context}\n\nQuestion: {question}"}
+                {
+                    "role": "system",
+                    "content": f"You are a helpful assistant responding in {language_name}. Use the provided context to answer the question precisely. Answer only to the question, not to the context. You are expert on Finnish Collective Agreements.",
+                },
+                {
+                    "role": "user",
+                    "content": f"Context:\n{full_context}\n\nQuestion: {question}",
+                },
             ]
-            
+
             # Generate response
             response = openai.ChatCompletion.create(
                 model=self.model,
                 messages=messages,
                 max_tokens=self.max_tokens
             )
-            
+
             bot_response = response.choices[0].message.content.strip()
-            
+
             # Add to conversation history
             self.add_to_conversation_history(question, bot_response)
-            
+
             logger.info("Response generated successfully.")
             return bot_response, question
-        
+
         except Exception as e:
             logger.error(f"Error in response generation: {str(e)}", exc_info=True)
             return f"Sorry, there was an error processing your request: {str(e)}"
