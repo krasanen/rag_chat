@@ -92,11 +92,7 @@ def main():
 
         # Prepare conversation history context
         conversation_history_context = "\n".join(
-            [
-                f"User: {msg['content']}"
-                for msg in st.session_state.messages
-                if msg["role"] == "user"
-            ]
+            [f"User: {msg['content']}" for msg in st.session_state.messages]
         )
 
         # Add user message to chat history

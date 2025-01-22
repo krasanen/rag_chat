@@ -104,7 +104,7 @@ class ResponseGenerator:
             # Log the retrieval results
             logger.info(f"Question: {question}")
             logger.info(f"Number of retrieved chunks: {len(retrieved_texts)}")
-            logger.info(f"retrieved_texts: {retrieved_texts}")
+            logger.info(f"previous_context: {previous_context}")
 
             # Detect language if not specified
             if not language:
