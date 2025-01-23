@@ -1,38 +1,58 @@
 import re
-from typing import Optional, Dict, Any
+import os
+import sqlite3
+from typing import Optional, Dict, Any, List
 
 class IceBreakerAgent:
     """
-    Agent responsible for handling common ice breaker phrases
+    Agent responsible for handling common ice breaker phrases from database
     """
-    # Comprehensive list of ice breaker phrases in Finnish and other common languages
-    ICE_BREAKER_PHRASES = {
-        # Finnish
-        'fi': [
-            'terve', 'hei', 'moi', 'moikka', 'terve hei', 'päivää', 'hyvää päivää', 
-            'mitä kuuluu', 'kuinka voit', 'hauska tavata', 'miten menee'
-        ],
-        # English
-        'en': [
-            'hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 
-            'good evening', 'what\'s up', 'how are you', 'nice to meet you'
-        ],
-        # Swedish
-        'sv': [
-            'hej', 'hallå', 'god dag', 'hur mår du', 'trevligt att träffas'
-        ]
-    }
+    def __init__(self, db_path: Optional[str] = None):
+        """
+        Initialize the ice breaker agent with database connection
+        
+        Args:
+            db_path: Optional path to the ice breakers database
+        """
+        # Use default database path if not provided
+        if db_path is None:
+            db_path = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), 
+                'database', 
+                'ice_breakers.db'
+            )
+        
+        # Ensure database exists
+        if not os.path.exists(db_path):
+            from database.init_ice_breaker_db import create_ice_breaker_database
+            create_ice_breaker_database()
+        
+        # Connect to database
+        self.conn = sqlite3.connect(db_path)
+        self.cursor = self.conn.cursor()
+        
+        # Precompile regex patterns for efficiency
+        self.ice_breaker_patterns = self._compile_patterns()
 
-    def __init__(self):
+    def _compile_patterns(self) -> Dict[str, List[re.Pattern]]:
         """
-        Initialize the ice breaker agent
+        Compile regex patterns for all ice breaker phrases
+        
+        Returns:
+            Dictionary of language-specific regex patterns
         """
-        # Compile regex patterns for efficient matching
-        self.ice_breaker_patterns = {
-            lang: [re.compile(rf'\b{re.escape(phrase)}\b', re.IGNORECASE) 
-                   for phrase in phrases]
-            for lang, phrases in self.ICE_BREAKER_PHRASES.items()
-        }
+        # Fetch all phrases from database
+        self.cursor.execute("SELECT phrase, language FROM ice_breaker_phrases")
+        phrases = self.cursor.fetchall()
+        
+        # Compile patterns
+        patterns = {}
+        for phrase, lang in phrases:
+            if lang not in patterns:
+                patterns[lang] = []
+            patterns[lang].append(re.compile(rf'\b{re.escape(phrase)}\b', re.IGNORECASE))
+        
+        return patterns
 
     def is_ice_breaker(self, text: str) -> bool:
         """
@@ -61,38 +81,27 @@ class IceBreakerAgent:
         Returns:
             Optional[str]: Friendly response or None
         """
-        # Detect language (simple approach)
-        text_lower = text.lower().strip()
+        # Detect language and get category
+        self.cursor.execute("""
+            SELECT language, category FROM ice_breaker_phrases 
+            WHERE ? LIKE '%' || phrase || '%'
+        """, (text,))
+        result = self.cursor.fetchone()
         
-        # Finnish responses
-        if any(phrase in text_lower for phrase in self.ICE_BREAKER_PHRASES['fi']):
-            responses = [
-                "Terve! Mitä sinulle kuuluu?",
-                "Hei! Hauska tavata!",
-                "Päivää! Miten voin auttaa?",
-            ]
-        # English responses
-        elif any(phrase in text_lower for phrase in self.ICE_BREAKER_PHRASES['en']):
-            responses = [
-                "Hi there! How can I help you today?",
-                "Hello! What can I do for you?",
-                "Greetings! How are you doing?",
-            ]
-        # Swedish responses
-        elif any(phrase in text_lower for phrase in self.ICE_BREAKER_PHRASES['sv']):
-            responses = [
-                "Hej! Hur kan jag hjälpa dig?",
-                "Hallå! Vad kan jag göra för dig?",
-            ]
-        else:
-            # Fallback response
-            responses = [
-                "Hello! How can I assist you today?",
-            ]
+        if not result:
+            return "Hello! How can I help you today?"
         
-        # Import random here to avoid global import
-        import random
-        return random.choice(responses)
+        language, category = result
+        
+        # Fetch predefined responses based on language and category
+        self.cursor.execute("""
+            SELECT response FROM ice_breaker_responses 
+            WHERE language = ? AND category = ?
+            ORDER BY RANDOM() LIMIT 1
+        """, (language, category))
+        
+        response = self.cursor.fetchone()
+        return response[0] if response else "Hello! How can I help you today?"
 
     def process(self, input_text: str) -> Dict[str, Any]:
         """
@@ -116,3 +125,10 @@ class IceBreakerAgent:
             'is_ice_breaker': False,
             'response': None
         }
+
+    def __del__(self):
+        """
+        Close database connection when object is deleted
+        """
+        if hasattr(self, 'conn'):
+            self.conn.close()
