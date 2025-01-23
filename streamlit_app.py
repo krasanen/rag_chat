@@ -55,20 +55,41 @@ def initialize_system():
 
 
 def main():
-    st.set_page_config(page_title="RAG Chatbot", page_icon="")
-    st.title("Finnish Collective Agreements Chatbot ")
+    # Set page configuration
+    st.set_page_config(page_title="RAG Chatbot", page_icon="💬", layout="wide")
+    st.title("Finnish Collective Agreements Chatbot")
+
+    # Initialize session state for agent settings if not exists
+    if 'agent_settings' not in st.session_state:
+        st.session_state.agent_settings = {
+            'ice_breaker': {
+                'enabled': True,
+                'type': 'default'
+            },
+            # Placeholder for future agents
+            'other_agents': []
+        }
+
+    # Sidebar for agent settings
+    with st.sidebar:
+        st.header("🤖 Agent Settings")
+        
+        # Ice Breaker Agent Section
+        st.subheader("Ice Breaker Agent")
+        
+        # Enable/Disable Toggle
+        st.session_state.agent_settings['ice_breaker']['enabled'] = st.toggle(
+            "Enable Ice Breaker", 
+            value=st.session_state.agent_settings['ice_breaker']['enabled'],
+            help="Automatically detect and respond to greeting phrases"
+        )
 
     # Initialize systems
     retrieval, generator = initialize_system()
 
-    """Ready for user interaction."""
-
     # Initialize session state for chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
-
-    # Sidebar for context
-    st.sidebar.title("Retrieved Context")
 
     # Display chat messages from history on app rerun
     for message in st.session_state.messages:
@@ -101,11 +122,19 @@ def main():
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
 
+        # Conditionally initialize ice breaker agent based on settings
+        ice_breaker_agent = (
+            IceBreakerAgent() 
+            if st.session_state.agent_settings['ice_breaker']['enabled'] 
+            else None
+        )
+
         # Initialize conversation workflow
         conversation_workflow = ConversationWorkflow(
             retrieval_system=retrieval, 
             response_generator=generator,
-            ice_breaker_agent=IceBreakerAgent()
+            ice_breaker_agent=ice_breaker_agent,
+            enable_ice_breaker=st.session_state.agent_settings['ice_breaker']['enabled']
         )
 
         # Create a placeholder for the assistant's response

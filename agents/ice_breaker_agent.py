@@ -32,7 +32,7 @@ class IceBreakerAgent:
         self.cursor = self.conn.cursor()
         
         # Precompile regex patterns for efficiency
-        self.ice_breaker_patterns = self._compile_patterns()
+        self.compiled_patterns = self._compile_patterns()
 
     def _compile_patterns(self) -> Dict[str, List[re.Pattern]]:
         """
@@ -54,21 +54,35 @@ class IceBreakerAgent:
         
         return patterns
 
-    def is_ice_breaker(self, text: str) -> bool:
+    def is_ice_breaker(self, input_text: str) -> bool:
         """
-        Check if the input text is an ice breaker phrase
+        Check if the input text is a pure ice breaker phrase
         
         Args:
-            text (str): Input text to check
+            input_text: Input text to check
         
         Returns:
-            bool: True if the text is an ice breaker, False otherwise
+            True if the input is a pure ice breaker phrase, False otherwise
         """
-        # Check for ice breaker phrases in all languages
-        for lang_patterns in self.ice_breaker_patterns.values():
-            for pattern in lang_patterns:
-                if pattern.search(text):
+        # Normalize input
+        normalized_text = input_text.strip().lower()
+        
+        # Split input into words
+        words = normalized_text.split()
+        
+        # First word is the potential ice breaker
+        first_word = words[0]
+        
+        # If there are additional words after the first word, it's not a pure ice breaker
+        if len(words) > 1:
+            return False
+        
+        # Check against compiled regex patterns for each language
+        for lang, patterns in self.compiled_patterns.items():
+            for pattern in patterns:
+                if pattern.match(first_word):
                     return True
+        
         return False
 
     def generate_ice_breaker_response(self, text: str) -> Optional[str]:

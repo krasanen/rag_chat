@@ -67,7 +67,8 @@ class ConversationWorkflow:
     def __init__(self, 
                  retrieval_system: RetrievalSystem, 
                  response_generator: ResponseGenerator,
-                 ice_breaker_agent: Optional[IceBreakerAgent] = None):
+                 ice_breaker_agent: Optional[IceBreakerAgent] = None,
+                 enable_ice_breaker: bool = True):
         """
         Initialize the workflow graph
         
@@ -75,12 +76,14 @@ class ConversationWorkflow:
             retrieval_system: System for retrieving relevant context
             response_generator: System for generating responses
             ice_breaker_agent: Optional custom ice breaker agent
+            enable_ice_breaker: Flag to enable/disable ice breaker functionality
         """
         self.retrieval_system = retrieval_system
         self.response_generator = response_generator
         
-        # Initialize ice breaker agent first
+        # Initialize ice breaker agent and respect enable flag
         self.ice_breaker_agent = ice_breaker_agent or IceBreakerAgent()
+        self.enable_ice_breaker = enable_ice_breaker and ice_breaker_agent is not None
         
         # Create ice breaker tool
         self.ice_breaker_tool = IceBreakerTool(self.ice_breaker_agent)
@@ -136,24 +139,32 @@ class ConversationWorkflow:
         graph = StateGraph(ConversationState)
 
         # Define nodes for different stages of conversation processing
-        graph.add_node("check_ice_breaker", self.check_ice_breaker)
+        if self.enable_ice_breaker:
+            graph.add_node("check_ice_breaker", self.check_ice_breaker)
+            graph.set_entry_point("check_ice_breaker")
+            
+            # Conditional routing based on ice breaker check
+            graph.add_conditional_edges(
+                "check_ice_breaker",
+                self.route_after_ice_breaker,
+                {
+                    "ice_breaker": END,  # Stop if it's an ice breaker
+                    "continue": "retrieve_context"  # Continue to normal workflow
+                }
+            )
+        else:
+            # If ice breaker is disabled, start directly with retrieve_context
+            graph.set_entry_point("retrieve_context")
+
+        # Always add these nodes
         graph.add_node("retrieve_context", self.retrieve_context)
         graph.add_node("generate_response", self.generate_response)
         graph.add_node("handle_error", self.handle_error)
 
-        # Define graph edges
-        graph.set_entry_point("check_ice_breaker")
+        # Connect nodes for normal workflow
+        if not self.enable_ice_breaker:
+            graph.add_edge("retrieve_context", "generate_response")
         
-        # Conditional routing based on ice breaker check
-        graph.add_conditional_edges(
-            "check_ice_breaker",
-            self.route_after_ice_breaker,
-            {
-                "ice_breaker": END,  # Stop if it's an ice breaker
-                "continue": "retrieve_context"  # Continue to normal workflow
-            }
-        )
-        graph.add_edge("retrieve_context", "generate_response")
         graph.add_conditional_edges(
             "generate_response",
             self.route_response,
@@ -176,8 +187,11 @@ class ConversationWorkflow:
         Returns:
             Updated state with ice breaker check result
         """
+        # Ensure we're only checking the current input
+        current_input = state.get('input', '')
+        
         try:
-            ice_breaker_result = self.ice_breaker_agent.process(state['input'])
+            ice_breaker_result = self.ice_breaker_agent.process(current_input)
             return {
                 **state, 
                 'is_ice_breaker': bool(ice_breaker_result['is_ice_breaker']),

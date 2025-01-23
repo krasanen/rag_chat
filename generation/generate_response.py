@@ -1,5 +1,5 @@
 # generation/generate_response.py
-from typing import List, Optional, Generator, Union
+from typing import List, Optional, Generator, Union, Dict
 from openai import OpenAI
 
 import tiktoken
@@ -69,23 +69,21 @@ class ResponseGenerator:
             self.conversation_history = self.conversation_history[-self.max_conversation_history:]
 
     def generate(
-        self,
-        retrieved_texts: List[str],
-        query: str,
-        previous_context: Optional[List[Union[dict, str]]] = None,
-        language: Optional[str] = None,
+        self, 
+        retrieved_texts: List[str], 
+        query: str, 
+        previous_context: Optional[List[Dict[str, str]]] = None
     ) -> Generator[str, None, None]:
         """
-        Generate a response based on retrieved context and query.
-
+        Generate a response based on retrieved context and query
+        
         Args:
-            retrieved_texts (List[str]): List of retrieved context texts.
-            query (str): User's query.
-            previous_context (Optional[List[Union[dict, str]]]): Previous conversation context.
-            language (Optional[str]): Language of the query.
-
-        Yields:
-            Generator of response tokens.
+            retrieved_texts: List of retrieved context texts
+            query: User's input query
+            previous_context: Previous conversation history
+        
+        Returns:
+            Generator yielding response tokens
         """
         # Logging
         logger.info(f"Question: {query}")
@@ -94,62 +92,71 @@ class ResponseGenerator:
         # Prepare conversation context
         if previous_context is None:
             previous_context = []
-        
-        # Convert previous context to message format if needed
-        messages = []
-        for context in previous_context:
-            if isinstance(context, dict):
-                messages.append(context)
-            elif isinstance(context, str):
-                messages.append({"role": "user", "content": context})
 
-        # Detect language if not provided
+        # Detect language of the query
         try:
-            if not language:
-                language = detect(query)
+            language = detect(query)
         except LangDetectException:
             language = 'en'
+
+        logger.info(f"Detected language: {language}")
+
+        # Language mapping for OpenAI
+        language_map = {
+            'fi': 'Finnish',
+            'en': 'English',
+            'sv': 'Swedish',
+            'ru': 'Russian',
+            'de': 'German'
+        }
+
+        # Fallback to English if language not in map
+        language_name = language_map.get(language, 'English')
 
         # Prepare system prompt based on language
         system_prompt = (
             "You are a helpful AI assistant that provides accurate and concise answers. "
-            "Use the provided context to inform your response, but do not simply repeat it. "
-            "If the context does not contain relevant information, acknowledge that honestly."
+            "Use the provided context to answer the question. "
+            "If the context does not contain relevant information, acknowledge that honestly. "
+            f"Respond in {language_name}"
         )
 
-        # Combine retrieved texts into context
-        context_text = "\n\n".join(retrieved_texts)
-        logger.info(f"Total tokens in retrieved texts: {self.count_tokens(context_text)}")
+        # Prepare conversation context messages
+        conversation_context = []
+        for msg in previous_context:
+            if msg.get('role') == 'user':
+                conversation_context.append({"role": "user", "content": msg.get('content', '')})
+            elif msg.get('role') == 'assistant':
+                conversation_context.append({"role": "assistant", "content": msg.get('content', '')})
 
-        # Prepare messages
+        # Combine retrieved texts into context
+        context = "\n\n".join(retrieved_texts) if retrieved_texts else "No additional context available."
+
+        # Prepare messages for the LLM
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Context:\n{context_text}\n\nQuery: {query}"}
+            *conversation_context,  # Add previous conversation context
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
         ]
 
-        # Generate response with streaming
-        def token_generator():
-            full_response = ""
-            response_chunks = self.openai_client.chat.completions.create(
+        # Stream response from OpenAI
+        try:
+            # Initialize OpenAI client
+            client = OpenAI(api_key=self.openai_api_key)
+
+            # Stream the response
+            stream = client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 max_tokens=self.max_tokens,
                 stream=True
             )
-            
-            for chunk in response_chunks:
-                # Check if the chunk has a content delta
-                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-                    token = chunk.choices[0].delta.content
-                    full_response += token
-                    yield token
-                
-                # Break if finish reason is 'stop'
-                if chunk.choices and chunk.choices[0].finish_reason == 'stop':
-                    break
 
-            # Optional: log the full response
-            logger.info(f"Full response: {full_response}")
+            # Yield tokens one by one
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
 
-        # Return the generator
-        return token_generator()
+        except Exception as e:
+            logger.error(f"Error generating response: {e}")
+            yield f"An error occurred: {e}"
