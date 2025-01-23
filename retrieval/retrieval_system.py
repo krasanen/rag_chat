@@ -6,7 +6,8 @@ import logging
 import pickle
 import numpy as np
 import faiss
-import openai
+from openai import OpenAI
+
 import torch
 import torch.nn.functional as F
 from typing import List
@@ -33,7 +34,10 @@ class RetrievalSystem:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set.")
-        openai.api_key = self.openai_api_key
+        
+        # Initialize OpenAI client
+        self.openai_client = OpenAI(api_key=self.openai_api_key)
+        
         self.dimension = 1536  # OpenAI's text-embedding-ada-002 has 1536 dimensions
 
         # Caching configuration
@@ -103,47 +107,45 @@ class RetrievalSystem:
         """
         # Normalize text
         text = text.strip().replace('\n', ' ')[:2000]  # Limit length
-        
+
         # Check cache first
         if text in self.embedding_cache:
             return self.embedding_cache[text]['embedding']
-        
+
         # Try OpenAI embedding
         try:
-            response = openai.Embedding.create(
-                input=text, 
-                model="text-embedding-ada-002"
-            )
-            embedding = response["data"][0]["embedding"]
-            
+            response = self.openai_client.embeddings.create(input=text, 
+            model="text-embedding-ada-002")
+            embedding = response.data[0].embedding
+
             # Cache the embedding
             self.embedding_cache[text] = {
                 'embedding': embedding,
                 'timestamp': time.time()
             }
             self._save_cache()
-            
+
             return embedding
-        
+
         except Exception as openai_error:
             logging.warning(f"OpenAI embedding failed: {openai_error}")
-            
+
             # Local embedding fallback
             if use_local_fallback:
                 try:
                     local_embedding = self.local_embedding_model.encode(text).tolist()
-                    
+
                     # Cache local embedding
                     self.embedding_cache[text] = {
                         'embedding': local_embedding,
                         'timestamp': time.time()
                     }
                     self._save_cache()
-                    
+
                     return local_embedding
                 except Exception as local_error:
                     logging.error(f"Local embedding failed: {local_error}")
-        
+
         return []
 
     def batch_get_embeddings(
@@ -155,7 +157,7 @@ class RetrievalSystem:
         Batch embedding generation with caching and fallback
         """
         embeddings = []
-        
+
         # Check cache first
         uncached_texts = []
         for text in texts:
@@ -164,50 +166,48 @@ class RetrievalSystem:
                 embeddings.append(self.embedding_cache[text]['embedding'])
             else:
                 uncached_texts.append(text)
-        
+
         # Process uncached texts in batches
         for i in range(0, len(uncached_texts), batch_size):
             batch = uncached_texts[i:i+batch_size]
-            
+
             try:
                 # Try OpenAI batch embedding
-                response = openai.Embedding.create(
-                    input=batch, 
-                    model="text-embedding-ada-002"
-                )
-                batch_embeddings = [item['embedding'] for item in response['data']]
-                
+                response = self.openai_client.embeddings.create(input=batch, 
+                model="text-embedding-ada-002")
+                batch_embeddings = [item['embedding'] for item in response.data]
+
                 # Cache batch embeddings
                 for text, embedding in zip(batch, batch_embeddings):
                     self.embedding_cache[text] = {
                         'embedding': embedding,
                         'timestamp': time.time()
                     }
-                
+
                 embeddings.extend(batch_embeddings)
-            
+
             except Exception as openai_error:
                 logging.warning(f"OpenAI batch embedding failed: {openai_error}")
-                
+
                 # Local embedding fallback
                 try:
                     local_batch_embeddings = self.local_embedding_model.encode(batch).tolist()
-                    
+
                     # Cache local embeddings
                     for text, embedding in zip(batch, local_batch_embeddings):
                         self.embedding_cache[text] = {
                             'embedding': embedding,
                             'timestamp': time.time()
                         }
-                    
+
                     embeddings.extend(local_batch_embeddings)
-                
+
                 except Exception as local_error:
                     logging.error(f"Local batch embedding failed: {local_error}")
-        
+
         # Save cache periodically
         self._save_cache()
-        
+
         return embeddings
 
     def build_index(self, index_path: str, mapping_path: str, batch_size: int = 10):
@@ -335,16 +335,14 @@ class RetrievalSystem:
         """
 
         try:
-            response = openai.ChatCompletion.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": query},
-                ],
-                max_tokens=30,
-                temperature=0.2,
-            )
-            topics_text = response.choices[0].message["content"].strip()
+            response = self.openai_client.chat.completions.create(model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query},
+            ],
+            max_tokens=30,
+            temperature=0.2)
+            topics_text = response.choices[0].message.content.strip()
             topics = [topic.strip() for topic in topics_text.split(",")]
             logger.info(f"Extracted topics: {topics}")
             return topics
@@ -385,7 +383,7 @@ class RetrievalSystem:
 
             logger.info(f"Retrieved {len(results)} chunks")
             return results[:top_k]
-        
+
 
         except Exception as e:
             logger.error(f"Retrieval error: {str(e)}")

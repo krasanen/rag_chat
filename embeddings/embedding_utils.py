@@ -1,10 +1,11 @@
-import openai
+from openai import OpenAI
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 import numpy as np
 import os
 from typing import List
 
 # Initialize OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
     raise ValueError("OPENAI_API_KEY environment variable not set.")
 
@@ -20,8 +21,8 @@ def get_embedding(text: str, model: str = "text-embedding-ada-002") -> List[floa
     Returns:
         List[float]: The embedding vector.
     """
-    response = openai.Embedding.create(input=text, model=model)
-    embedding = response["data"][0]["embedding"]
+    response = client.embeddings.create(input=text, model=model)
+    embedding = response.data[0].embedding
     return embedding
 
 

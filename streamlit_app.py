@@ -9,6 +9,8 @@ import time
 # Import local modules
 from retrieval.retrieval_system import RetrievalSystem
 from generation.generate_response import ResponseGenerator
+from workflows.conversation_workflow import ConversationWorkflow
+from agents.ice_breaker_agent import IceBreakerAgent
 
 # Load environment variables
 load_dotenv()
@@ -99,43 +101,49 @@ def main():
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # time retrieval
-        start_time = time.time()
-        # Retrieve relevant texts
-        retrieved_texts = retrieval.retrieve(prompt)
-        end_time = time.time()
-        print(f"Retrieval time: {end_time - start_time} seconds")
+        # Initialize conversation workflow
+        conversation_workflow = ConversationWorkflow(
+            retrieval_system=retrieval, 
+            response_generator=generator,
+            ice_breaker_agent=IceBreakerAgent()
+        )
 
         # Create a placeholder for the assistant's response
         with st.chat_message("assistant"):
             response_placeholder = st.empty()
             response_text = ""
 
-            # Generate response with streaming
-            token_generator = generator.generate(
-                retrieved_texts,
-                prompt,
-                previous_context=conversation_history_context,
+            # Run the workflow and get the result
+            token_generator = conversation_workflow.run(
+                input_text=prompt, 
+                chat_history=st.session_state.messages
             )
 
-            # Stream tokens to the response placeholder
+            # Stream the response
             for token in token_generator:
                 response_text += token
                 response_placeholder.markdown(response_text)
 
-            # Show retrieved context in sidebar
-            st.sidebar.markdown("### Retrieved Texts:")
-            for idx, text in enumerate(retrieved_texts, 1):
-                # Generate a unique key for each text area
-                unique_key = f"context_{uuid.uuid4()}"
-                st.sidebar.text_area(
-                    f"Context {idx}",
-                    value=text,
-                    height=100,
-                    key=unique_key,
-                )
+            # Extract retrieved texts (use empty list for ice breakers)
+            retrieved_texts = conversation_workflow.workflow_result.get('retrieved_texts', []) or []
 
-        # Add assistant response to chat history
+            # Show retrieved context in sidebar only for non-ice breaker responses
+            if not conversation_workflow.workflow_result.get('is_ice_breaker', False):
+                st.sidebar.markdown("### Retrieved Texts:")
+                for idx, text in enumerate(retrieved_texts, 1):
+                    # Generate a unique key for each text area
+                    unique_key = f"context_{uuid.uuid4()}"
+                    st.sidebar.text_area(
+                        f"Context {idx}",
+                        value=text,
+                        height=100,
+                        key=unique_key,
+                    )
+
+        # Display the response
+        response_placeholder.markdown(response_text)
+
+        # Update chat history after displaying the response
         st.session_state.messages.append(
             {
                 "role": "assistant",
