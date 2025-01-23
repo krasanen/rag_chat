@@ -232,11 +232,6 @@ class ConversationWorkflow:
             Updated state with generated response
         """
         try:
-            # First, check if the ice breaker tool provides a response
-            tool_response = self.ice_breaker_tool._run(state['input'])
-            if tool_response:
-                return {**state, 'response': tool_response, 'is_ice_breaker': True}
-
             # Use response generator with retrieved context
             response_generator = self.response_generator.generate(
                 state.get('retrieved_texts', []),
@@ -247,9 +242,9 @@ class ConversationWorkflow:
             # Collect the full response (for streaming-compatible workflows)
             response_text = ''.join(list(response_generator))
             
-            return {**state, 'response': response_text, 'is_ice_breaker': False}
+            return {**state, 'response': response_text}
         except Exception as e:
-            return {**state, 'error': str(e), 'is_ice_breaker': False}
+            return {**state, 'error': str(e)}
 
     def route_response(self, state: Dict[str, Any]) -> str:
         """
