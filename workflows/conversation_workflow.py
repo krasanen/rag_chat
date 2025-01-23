@@ -5,11 +5,60 @@ from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool
+from langchain_core.pydantic_v1 import BaseModel, Field
 
 # Import local modules for retrieval and generation
 from retrieval.retrieval_system import RetrievalSystem
 from generation.generate_response import ResponseGenerator
 from agents.ice_breaker_agent import IceBreakerAgent
+
+class IceBreakerTool(BaseTool):
+    """
+    Tool wrapper for the IceBreakerAgent to be used by LLM
+    """
+    name: str = "ice_breaker_detector"
+    description: str = """
+    Detects and handles common greeting and ice breaker phrases in multiple languages.
+    Use this tool to check if an input is a greeting or casual conversation starter.
+    Returns a friendly response if the input is an ice breaker.
+    """
+
+    def __init__(self, ice_breaker_agent):
+        """
+        Initialize the tool with an ice breaker agent
+        
+        Args:
+            ice_breaker_agent: Instance of IceBreakerAgent
+        """
+        # Use a dictionary to store the agent to avoid Pydantic field issues
+        super().__init__()
+        self._agent = ice_breaker_agent
+
+    def _run(self, input_text: str) -> str:
+        """
+        Run the ice breaker detection
+        
+        Args:
+            input_text (str): Input text to check
+        
+        Returns:
+            str: Ice breaker response or empty string
+        """
+        result = self._agent.process(input_text)
+        return result['response'] if result['is_ice_breaker'] else ""
+
+    async def _arun(self, input_text: str) -> str:
+        """
+        Async version of _run method
+        
+        Args:
+            input_text (str): Input text to check
+        
+        Returns:
+            str: Ice breaker response or empty string
+        """
+        return self._run(input_text)
 
 class ConversationWorkflow:
     """
@@ -29,9 +78,43 @@ class ConversationWorkflow:
         """
         self.retrieval_system = retrieval_system
         self.response_generator = response_generator
+        
+        # Initialize ice breaker agent first
         self.ice_breaker_agent = ice_breaker_agent or IceBreakerAgent()
+        
+        # Create ice breaker tool
+        self.ice_breaker_tool = IceBreakerTool(self.ice_breaker_agent)
+        
         self.workflow_result = None  # Store workflow result for later access
-        self.llm = ChatOpenAI(model="gpt-4o")
+        
+        # Initialize LLM with ice breaker tool
+        self.llm = ChatOpenAI(
+            model="gpt-4o", 
+            temperature=0.7,
+            model_kwargs={
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": self.ice_breaker_tool.name,
+                            "description": self.ice_breaker_tool.description,
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "input_text": {
+                                        "type": "string",
+                                        "description": "The input text to check for ice breaker phrases"
+                                    }
+                                },
+                                "required": ["input_text"]
+                            }
+                        }
+                    }
+                ]
+            }
+        )
+        
+        # Create the workflow graph with updated configuration
         self.graph = self.create_workflow_graph()
 
     def create_workflow_graph(self) -> StateGraph:
@@ -149,6 +232,11 @@ class ConversationWorkflow:
             Updated state with generated response
         """
         try:
+            # First, check if the ice breaker tool provides a response
+            tool_response = self.ice_breaker_tool._run(state['input'])
+            if tool_response:
+                return {**state, 'response': tool_response, 'is_ice_breaker': True}
+
             # Use response generator with retrieved context
             response_generator = self.response_generator.generate(
                 state.get('retrieved_texts', []),
@@ -159,9 +247,9 @@ class ConversationWorkflow:
             # Collect the full response (for streaming-compatible workflows)
             response_text = ''.join(list(response_generator))
             
-            return {**state, 'response': response_text}
+            return {**state, 'response': response_text, 'is_ice_breaker': False}
         except Exception as e:
-            return {**state, 'error': str(e)}
+            return {**state, 'error': str(e), 'is_ice_breaker': False}
 
     def route_response(self, state: Dict[str, Any]) -> str:
         """
