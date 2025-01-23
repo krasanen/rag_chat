@@ -378,9 +378,10 @@ class RetrievalSystem:
             results = [self.id_mapping[idx] for idx in I[0] if idx in self.id_mapping]
 
             # Optional: Re-rank results using semantic similarity
-            results = sorted(
-                results, key=lambda x: self._text_similarity(x, query), reverse=True
-            )
+            # disabled for now as it is slow andcauses a lot of openai api calls
+            # results = sorted(
+            #     results, key=lambda x: self._text_similarity(x, query), reverse=True
+            # )
 
             logger.info(f"Retrieved {len(results)} chunks")
             return results[:top_k]
