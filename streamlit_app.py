@@ -5,6 +5,8 @@ import utils.pdf_to_text
 import utils.split_text
 import uuid
 import time
+from pathlib import Path
+from typing import List, Dict
 
 # Import local modules
 from retrieval.retrieval_system import RetrievalSystem
@@ -54,6 +56,36 @@ def initialize_system():
     return retrieval, generator
 
 
+def get_source_pdf_links() -> List[Dict[str, str]]:
+    """
+    Retrieve links to source PDF files with their web URLs
+    
+    Returns:
+        List of dictionaries with PDF file information and web URLs
+    """
+    source_pdfs_dir = Path(__file__).parent / 'source_pdfs'
+    pdf_links = []
+    
+    for pdf_file in source_pdfs_dir.glob('*.pdf'):
+        # Try to find corresponding .url file
+        url_file = source_pdfs_dir / f"{pdf_file.stem}.url"
+        web_url = ''
+        
+        # Read URL from .url file if it exists
+        if url_file.exists():
+            with open(url_file, 'r') as f:
+                web_url = f.read().strip()
+        
+        pdf_links.append({
+            'filename': pdf_file.name,
+            'path': str(pdf_file),
+            'web_url': web_url,
+            'url': f'file://{pdf_file}'
+        })
+    
+    return pdf_links
+
+
 def main():
     # Set page configuration
     st.set_page_config(page_title="RAG Chatbot", page_icon="💬", layout="wide")
@@ -84,6 +116,15 @@ def main():
             help="Automatically detect and respond to greeting phrases"
         )
 
+    # Sidebar for source PDF links
+    with st.sidebar:
+        st.header("📄 Source Documents")
+        source_pdfs = get_source_pdf_links()
+        
+        for pdf in source_pdfs:
+            if pdf['web_url']:
+                st.markdown(f"[{pdf['filename']}]({pdf['web_url']})")
+        
     # Initialize systems
     retrieval, generator = initialize_system()
 
