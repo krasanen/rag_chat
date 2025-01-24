@@ -14,4 +14,3 @@ streamlit
 langgraph
 langchain
 langchain-openai
-sqlite3
