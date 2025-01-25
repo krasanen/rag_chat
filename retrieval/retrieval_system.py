@@ -172,10 +172,16 @@ class RetrievalSystem:
             batch = uncached_texts[i:i+batch_size]
 
             try:
-                # Try OpenAI batch embedding
-                response = self.openai_client.embeddings.create(input=batch, 
-                model="text-embedding-ada-002")
-                batch_embeddings = [item['embedding'] for item in response.data]
+                # Try OpenAI batch embedding with updated library syntax
+                response = self.openai_client.embeddings.create(
+                    input=batch, 
+                    model="text-embedding-ada-002"
+                )
+                
+                # Correctly extract embeddings from the new library response
+                batch_embeddings = [
+                    item.embedding for item in response.data
+                ]
 
                 # Cache batch embeddings
                 for text, embedding in zip(batch, batch_embeddings):
@@ -214,70 +220,90 @@ class RetrievalSystem:
         """
         Builds the FAISS index from text chunks using batch embeddings, with optimized chunking strategies.
         """
-        # Load cache if exists
-        if os.path.exists(self.cache_file):
-            with open(self.cache_file, "r", encoding="utf-8") as cf:
-                embedding_cache = json.load(cf)
-        else:
-            embedding_cache = {}
-
-        texts = []
-        file_indices = []
-        for idx, chunk_file in enumerate(os.listdir(self.chunk_dir)):
-            if chunk_file.endswith('.txt'):
-                chunk_path = os.path.join(self.chunk_dir, chunk_file)
+        logger.info("Starting index build process...")
+        
+        # Ensure index is initialized with correct dimension
+        if not hasattr(self, 'index') or self.index is None:
+            self.index = faiss.IndexFlatL2(self.dimension)
+        
+        # Verify index dimension matches expected dimension
+        assert self.index.d == self.dimension, f"Index dimension {self.index.d} does not match expected {self.dimension}"
+        
+        # Collect text chunks
+        chunk_files = [
+            os.path.join(self.chunk_dir, f) 
+            for f in os.listdir(self.chunk_dir) 
+            if f.endswith('.txt')
+        ]
+        
+        logger.info(f"Found {len(chunk_files)} chunk files to process")
+        
+        # Process chunks in batches
+        processed_chunks = 0
+        for i in range(0, len(chunk_files), batch_size):
+            batch_files = chunk_files[i:i+batch_size]
+            
+            # Read chunk contents
+            batch_texts = []
+            for chunk_file in batch_files:
                 try:
-                    with open(chunk_path, "r", encoding="utf-8") as f:
-                        full_text = f.read().strip()
-
-                    # Dynamic Chunking
-                    chunks = self.create_semantic_chunks(full_text)
-
-                    for chunk in chunks:
-                        if not chunk.strip():  # Skip empty chunks
-                            continue
-                        if chunk in embedding_cache:
-                            embedding = embedding_cache[chunk]
-                            if embedding:
-                                embedding_vector = np.array(embedding).astype("float32")
-                                self.index.add(embedding_vector.reshape(1, -1))
-                                self.id_mapping[idx] = chunk
-                        else:
-                            texts.append(chunk)
-                            file_indices.append(idx)
-                            if len(texts) == batch_size:
-                                embeddings = self.batch_get_embeddings(texts)
-                                for i, embedding in enumerate(embeddings):
-                                    if not embedding:
-                                        continue
-                                    embedding_cache[texts[i]] = embedding
-                                    embedding_vector = np.array(embedding).astype(
-                                        "float32"
-                                    )
-                                    self.index.add(embedding_vector.reshape(1, -1))
-                                    self.id_mapping[file_indices[i]] = texts[i]
-                                texts = []
-                                file_indices = []
+                    with open(chunk_file, 'r', encoding='utf-8') as f:
+                        text = f.read().strip()
+                        if text:
+                            batch_texts.append(text)
                 except Exception as e:
-                    logger.error(f"Error processing {chunk_file}: {e}")
-        # Process remaining texts
-        if texts:
-            embeddings = self.batch_get_embeddings(texts)
-            for i, embedding in enumerate(embeddings):
-                if not embedding:
-                    continue
-                embedding_cache[texts[i]] = embedding
-                embedding_vector = np.array(embedding).astype("float32")
-                self.index.add(embedding_vector.reshape(1, -1))
-                self.id_mapping[file_indices[i]] = texts[i]
-
-        # Save index and mappings
-        faiss.write_index(self.index, index_path)
-        with open(mapping_path, "wb") as f:
-            pickle.dump(self.id_mapping, f)
-        with open(self.cache_file, "w", encoding="utf-8") as cf:
-            json.dump(embedding_cache, cf)
-        logger.info("FAISS index built and saved successfully.")
+                    logger.warning(f"Could not read chunk file {chunk_file}: {e}")
+            
+            # Skip empty batches
+            if not batch_texts:
+                continue
+            
+            # Generate embeddings
+            try:
+                embeddings = self.batch_get_embeddings(batch_texts)
+                
+                # Ensure embeddings match index dimension
+                valid_embeddings = []
+                valid_texts = []
+                for text, embedding in zip(batch_texts, embeddings):
+                    # Truncate or pad embedding to match dimension
+                    if len(embedding) > self.dimension:
+                        embedding = embedding[:self.dimension]
+                    elif len(embedding) < self.dimension:
+                        embedding.extend([0.0] * (self.dimension - len(embedding)))
+                    
+                    # Only add if dimension matches exactly
+                    if len(embedding) == self.dimension:
+                        valid_embeddings.append(embedding)
+                        valid_texts.append(text)
+                
+                # Convert to numpy array and reshape
+                embedding_matrix = np.array(valid_embeddings, dtype='float32')
+                
+                # Add to index
+                self.index.add(embedding_matrix)
+                
+                # Update mapping
+                for text in valid_texts:
+                    self.id_mapping[len(self.id_mapping)] = text
+                
+                processed_chunks += len(valid_texts)
+                logger.info(f"Processed {processed_chunks} chunks")
+                
+            except Exception as e:
+                logger.error(f"Error processing batch: {e}")
+        
+        # Save index and mapping
+        try:
+            faiss.write_index(self.index, index_path)
+            with open(mapping_path, "wb") as f:
+                pickle.dump(self.id_mapping, f)
+            logger.info(f"Index saved to {index_path}")
+            logger.info(f"Mapping saved to {mapping_path}")
+        except Exception as e:
+            logger.error(f"Error saving index or mapping: {e}")
+        
+        logger.info(f"Total chunks processed: {processed_chunks}")
 
     def create_semantic_chunks(self, text, max_tokens=800, overlap=200):
         """
