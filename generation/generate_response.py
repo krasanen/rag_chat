@@ -117,6 +117,8 @@ class ResponseGenerator:
             "You are a helpful AI assistant that provides accurate and concise answers. "
             "Use the provided context to answer the question. "
             "If the context does not contain relevant information, acknowledge that honestly. "
+            "If the user greets you (e.g., 'Hello', 'Hi', 'Moi', 'Hei'), respond with a friendly greeting. "
+            "Otherwise, use the provided context to answer the question. "
             f"Respond in {language_name}"
         )
 

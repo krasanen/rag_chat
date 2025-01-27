@@ -127,17 +127,8 @@ class IceBreakerAgent:
         Returns:
             Dict with processing result
         """
-        # Check if the input is an ice breaker
-        if self.is_ice_breaker(input_text):
-            return {
-                'is_ice_breaker': True,
-                'response': self.generate_ice_breaker_response(input_text)
-            }
-        
-        # If not an ice breaker, return negative result
         return {
-            'is_ice_breaker': False,
-            'response': None
+            'response': self.generate_ice_breaker_response(input_text)
         }
 
     def __del__(self):

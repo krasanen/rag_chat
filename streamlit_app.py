@@ -189,7 +189,10 @@ def main():
 
             # Stream the response
             for token in token_generator:
-                response_text += token
+                if isinstance(token, str):
+                    response_text += token
+                else:
+                    response_text += str(token)
                 response_placeholder.markdown(response_text)
 
             # Extract retrieved texts (use empty list for ice breakers)
