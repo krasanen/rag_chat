@@ -250,7 +250,8 @@ class ConversationWorkflow:
             response_generator = self.response_generator.generate(
                 state.get('retrieved_texts', []),
                 state['input'],
-                previous_context=state.get('chat_history', [])
+                previous_context=state.get('chat_history', []),
+                llm=self.llm
             )
             
             # Collect the full response (for streaming-compatible workflows)
@@ -327,7 +328,8 @@ class ConversationWorkflow:
         response_generator = self.response_generator.generate(
             retrieved_texts=self.workflow_result.get('retrieved_texts', []),
             query=input_text,
-            previous_context=chat_history
+            previous_context=chat_history,
+            llm=self.llm
         )
         
         # Yield tokens

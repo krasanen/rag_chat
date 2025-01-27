@@ -1,6 +1,7 @@
 # generation/generate_response.py
 from typing import List, Optional, Generator, Union, Dict
-from openai import OpenAI
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_openai import ChatOpenAI
 
 import tiktoken
 import logging
@@ -13,24 +14,20 @@ logger = logging.getLogger(__name__)
 class ResponseGenerator:
 
     def __init__(
-        self, openai_api_key: str, model: str = "gpt-4o", max_tokens: int = 1024, 
+        self, model: str = "gpt-4o", 
+        max_tokens: int = 1024, 
         max_conversation_history: int = 5
     ):
         """
         Initializes the ResponseGenerator.
 
         Args:
-            openai_api_key (str): OpenAI API key.
-            model (str): OpenAI model to use.
+            model (str): Model to use for response generation.
             max_tokens (int): Maximum tokens allowed for the response.
             max_conversation_history (int): Maximum number of previous interactions to remember.
         """
-        self.openai_api_key = openai_api_key
         self.model = model
         self.max_tokens = max_tokens
-
-        # Initialize OpenAI client
-        self.openai_client = OpenAI(api_key=self.openai_api_key)
 
         # Initialize tokenizer
         self.encoding = tiktoken.get_encoding("gpt2")
@@ -72,7 +69,8 @@ class ResponseGenerator:
         self, 
         retrieved_texts: List[str], 
         query: str, 
-        previous_context: Optional[List[Dict[str, str]]] = None
+        previous_context: Optional[List[Dict[str, str]]] = None,
+        llm: Optional[ChatOpenAI] = None
     ) -> Generator[str, None, None]:
         """
         Generate a response based on retrieved context and query
@@ -81,6 +79,7 @@ class ResponseGenerator:
             retrieved_texts: List of retrieved context texts
             query: User's input query
             previous_context: Previous conversation history
+            llm: LangChain OpenAI client
         
         Returns:
             Generator yielding response tokens
@@ -132,30 +131,32 @@ class ResponseGenerator:
         # Combine retrieved texts into context
         context = "\n\n".join(retrieved_texts) if retrieved_texts else "No additional context available."
 
-        # Prepare messages for the LLM
+        # Prepare messages for the LLM using LangChain message types
         messages = [
-            {"role": "system", "content": system_prompt},
-            *conversation_context,  # Add previous conversation context
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
+            SystemMessage(content=system_prompt),
         ]
+        
+        # Add conversation context
+        for msg in previous_context:
+            if msg.get('role') == 'user':
+                messages.append(HumanMessage(content=msg.get('content', '')))
+            elif msg.get('role') == 'assistant':
+                messages.append(AIMessage(content=msg.get('content', '')))
 
-        # Stream response from OpenAI
+        # Add current query with context
+        messages.append(HumanMessage(content=f"Context:\n{context}\n\nQuestion: {query}"))
+
+        # Stream response from LLM
         try:
-            # Initialize OpenAI client
-            client = OpenAI(api_key=self.openai_api_key)
-
-            # Stream the response
-            stream = client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=self.max_tokens,
-                stream=True
+            stream = llm.stream(
+                messages,
+                max_tokens=self.max_tokens
             )
 
             # Yield tokens one by one
             for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    yield chunk.choices[0].delta.content
+                if hasattr(chunk, 'content'):
+                    yield chunk.content
 
         except Exception as e:
             logger.error(f"Error generating response: {e}")

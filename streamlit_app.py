@@ -47,8 +47,6 @@ def initialize_system():
     # Initialize Response Generator
     openai_api_key = os.getenv("OPENAI_API_KEY")
     generator = ResponseGenerator(
-        openai_api_key=openai_api_key,
-        model="gpt-4o",
         max_tokens=4096,
         max_conversation_history=10,  # Increased for Streamlit UI
     )
